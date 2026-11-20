@@ -197,7 +197,7 @@ class ActionEditorOverlay(
      */
     private fun recorded(px: List<Float>, py: List<Float>, startAt: Long, endAt: Long) {
         val dur = (endAt - startAt).coerceIn(30L, 60_000L)
-        val wait = if (recCount == 0) 0L else (startAt - lastEndAt).coerceIn(0L, 600_000L)
+        val wait = if (recCount == 0) 0L else (startAt - lastEndAt).coerceAtLeast(0L)
         val (xs, ys) = simplify(px, py)
         val act = if (xs.size == 1) {
             if (dur >= 450) TouchAct("longtap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait)
@@ -426,24 +426,15 @@ class ActionEditorOverlay(
             }
         }
 
+        private val recTint = Paint().apply { color = 0x22FF0000 }
+
         override fun onDraw(c: Canvas) {
-            c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)
-            val loc = IntArray(2)
-            getLocationOnScreen(loc)
-            c.save()
-            c.translate(-loc[0].toFloat(), -loc[1].toFloat())
-            for ((i, a) in acts.withIndex()) drawAct(c, a, i + 1, a === sel)
-            c.restore()
-            if (recording) {
-                ring.color = 0xFFE53935.toInt(); ring.strokeWidth = dpf(6)
-                c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ring)
-                fillP.color = 0xCCE53935.toInt()
-                c.drawRoundRect(dpf(12), dpf(56), dpf(12) + dpf(230), dpf(56) + dpf(36), dpf(8), dpf(8), fillP)
-                txt.textSize = dpf(15)
-                txt.textAlign = Paint.Align.LEFT
-                c.drawText("● ĐANG GHI  ($recCount)", dpf(22), dpf(80), txt)
-                txt.textAlign = Paint.Align.CENTER
+            if (recording) { // giống AutoClicker: chỉ phủ đỏ nhạt, không hiện thao tác đã ghi, không viền, không nhãn
+                c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), recTint)
+                return
             }
+            // không vẽ các thao tác (số 1, 2, 3, đường vuốt) lên màn hình cho đỡ rối mắt
+            c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)
         }
 
         private fun drawAct(c: Canvas, a: TouchAct, no: Int, selected: Boolean) {
@@ -516,7 +507,6 @@ class ActionEditorOverlay(
                     recT0 = e.eventTime
                 }
                 MotionEvent.ACTION_MOVE -> if (recDown) { recX.add(e.rawX); recY.add(e.rawY) }
-                MotionEvent.ACTION_POINTER_DOWN -> recDown = false // nhiều ngón: bỏ qua cú này
                 MotionEvent.ACTION_UP -> if (recDown) {
                     recDown = false
                     recX.add(e.rawX); recY.add(e.rawY)
