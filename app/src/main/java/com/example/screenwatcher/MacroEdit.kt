@@ -12,10 +12,25 @@ class TouchAct(
     var gap: Long = 150L,
     var wait: Long = 120L,     // chờ bao lâu (ms) rồi mới chạm điểm này
     var size: Int = 44,        // kích thước nút trên màn hình (dp)
+    var pts: FloatArray? = null, // đường đi đã ghi của cú vuốt: x0,y0,x1,y1,... (null = vuốt thẳng từ điểm đầu tới điểm cuối)
     val line: Int = -1,        // chỉ số dòng gốc trong macro (-1 = thao tác mới)
 ) {
     fun toLine(): String =
-        (if (kind == "swipe") "swipe $x1 $y1 $x2 $y2 $ms" else "$kind $x1 $y1 $ms") + Macro.suffix(times, gap, wait, size)
+        (if (kind == "swipe") "swipe $x1 $y1 $x2 $y2 $ms" + pathOpt() else "$kind $x1 $y1 $ms") +
+            Macro.suffix(times, gap, wait, size)
+
+    /** path=x,y;x,y;... chỉ ghi khi đường đi còn khớp điểm đầu / điểm cuối (kéo điểm đi chỗ khác thì bỏ đường cong, vuốt thẳng). */
+    private fun pathOpt(): String {
+        val p = pts ?: return ""
+        if (p.size < 6 || p.size % 2 != 0) return ""
+        if (p[0].toInt() != x1 || p[1].toInt() != y1 || p[p.size - 2].toInt() != x2 || p[p.size - 1].toInt() != y2) return ""
+        val sb = StringBuilder(" path=")
+        for (i in p.indices step 2) {
+            if (i > 0) sb.append(';')
+            sb.append(p[i].toInt()).append(',').append(p[i + 1].toInt())
+        }
+        return sb.toString()
+    }
 
     /** Nội dung lúc mới đọc, để biết thao tác có bị sửa hay không. */
     val sig: String = toLine()
@@ -27,6 +42,19 @@ object MacroEdit {
         "longtap" -> 800L
         "swipe" -> 300L
         else -> 60L
+    }
+
+    /** Đọc path=x,y;x,y;... thành mảng x0,y0,x1,y1,...; sai định dạng thì trả null. */
+    fun parsePath(s: String?): FloatArray? {
+        if (s.isNullOrBlank()) return null
+        val out = ArrayList<Float>()
+        for (pt in s.split(';')) {
+            val xy = pt.split(',')
+            val x = xy.getOrNull(0)?.toFloatOrNull() ?: return null
+            val y = xy.getOrNull(1)?.toFloatOrNull() ?: return null
+            out.add(x); out.add(y)
+        }
+        return if (out.size >= 4) out.toFloatArray() else null
     }
 
     fun parse(script: String): List<TouchAct> {
@@ -59,7 +87,7 @@ object MacroEdit {
                     TouchAct(
                         "swipe", a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(),
                         ms = a.getOrNull(4)?.toLong() ?: ms ?: defaultMs("swipe"),
-                        times = times, gap = gap, wait = wait, size = size, line = idx,
+                        times = times, gap = gap, wait = wait, size = size, pts = parsePath(opts["path"]), line = idx,
                     ),
                 )
             }

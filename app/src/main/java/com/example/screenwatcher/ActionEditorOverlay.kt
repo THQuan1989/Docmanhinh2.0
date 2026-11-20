@@ -56,6 +56,7 @@ class ActionEditorOverlay(
     private var recording = false
     private var recCount = 0
     private var lastEndAt = 0L
+    private var dispatching = false // đang phát lại cú vừa ghi cho ứng dụng: bỏ qua mọi cảm ứng trong lúc này (giống AutoClicker)
     private var recBtn: Button? = null
     private var toggleBtn: Button? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -172,6 +173,7 @@ class ActionEditorOverlay(
         recording = true
         recCount = 0
         lastEndAt = 0L
+        dispatching = false
         recBtn?.text = "⏹ Dừng"
         toast("Đang ghi: cứ thao tác trên màn hình như bình thường, xong bấm ⏹ Dừng")
         dv.invalidate()
@@ -180,37 +182,68 @@ class ActionEditorOverlay(
     private fun stopRecording() {
         if (!recording) return
         recording = false
+        dispatching = false
         recBtn?.text = "⏺ Ghi"
         setDvTouchable(drawing)
         toast("Đã ghi $recCount thao tác — bấm ✔ Xong để lưu vào luật")
         dv.invalidate()
     }
 
-    /** Lưu một cú chạm / giữ / vuốt vừa ghi và phát lại nó cho ứng dụng bên dưới (lớp phủ đã chặn mất cú chạm thật). */
-    private fun recorded(x1: Int, y1: Int, x2: Int, y2: Int, startAt: Long, endAt: Long) {
-        val dur = (endAt - startAt).coerceAtLeast(1)
-        val dist = hypot((x2 - x1).toDouble(), (y2 - y1).toDouble())
-        val wait = if (recCount == 0) 120L else (startAt - lastEndAt).coerceIn(0L, 600_000L)
-        val act = if (dist < dpf(16)) {
-            if (dur >= 450) TouchAct("longtap", x1, y1, ms = dur.coerceIn(450L, 60_000L), wait = wait)
-            else TouchAct("tap", x1, y1, ms = dur.coerceIn(30L, 300L), wait = wait)
+    /**
+     * Lưu một cú chạm / giữ / vuốt vừa ghi (giống cách AutoClicker ghi) rồi phát lại nó cho ứng dụng bên dưới.
+     *  - Giữ cả đường đi của ngón tay (tối đa 40 điểm); di chuyển < 8dp thì coi là một cú chạm.
+     *  - Thời gian giữ / vuốt lấy đúng như lúc bấm (tối thiểu 30 ms), không bị chặn trên.
+     *  - Thời gian chờ = từ lúc nhấc ngón trước tới lúc chạm xuống lần này (cú đầu tiên = 0).
+     */
+    private fun recorded(px: List<Float>, py: List<Float>, startAt: Long, endAt: Long) {
+        val dur = (endAt - startAt).coerceIn(30L, 60_000L)
+        val wait = if (recCount == 0) 0L else (startAt - lastEndAt).coerceIn(0L, 600_000L)
+        val (xs, ys) = simplify(px, py)
+        val act = if (xs.size == 1) {
+            if (dur >= 450) TouchAct("longtap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait)
+            else TouchAct("tap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait)
         } else {
-            TouchAct("swipe", x1, y1, x2, y2, ms = dur.coerceIn(80L, 3000L), wait = wait)
+            val n = xs.size
+            TouchAct(
+                "swipe", xs[0].toInt(), ys[0].toInt(), xs[n - 1].toInt(), ys[n - 1].toInt(), ms = dur, wait = wait,
+                pts = FloatArray(n * 2) { if (it % 2 == 0) xs[it / 2] else ys[it / 2] },
+            )
         }
         acts.add(act)
         recCount++
         lastEndAt = endAt
         dv.invalidate()
-        // phát lại cho ứng dụng: tạm cho cảm ứng xuyên qua lớp phủ
+        // phát lại cho ứng dụng: tạm cho cảm ứng xuyên qua lớp phủ, chờ phát xong mới bắt cảm ứng lại
         val svc = AutoClickService.instance ?: return
+        dispatching = true
         scope.launch {
             setDvTouchable(false)
-            delay(40)
-            if (act.kind == "swipe") svc.swipe(act.x1.toFloat(), act.y1.toFloat(), act.x2.toFloat(), act.y2.toFloat(), act.ms)
-            else svc.tap(act.x1.toFloat(), act.y1.toFloat(), act.ms)
-            delay(60)
+            delay(80)
+            val route = act.pts
+            when {
+                act.kind == "swipe" && route != null -> svc.path(route, act.ms)
+                act.kind == "swipe" -> svc.swipe(act.x1.toFloat(), act.y1.toFloat(), act.x2.toFloat(), act.y2.toFloat(), act.ms)
+                else -> svc.tap(act.x1.toFloat(), act.y1.toFloat(), act.ms)
+            }
+            dispatching = false
             if (recording && drawing) setDvTouchable(true)
         }
+    }
+
+    /** Gộp chuyển động nhỏ thành một lần chạm và giảm số điểm của đường vuốt (tối đa 40 điểm). */
+    private fun simplify(px: List<Float>, py: List<Float>): Pair<FloatArray, FloatArray> {
+        val x0 = px[0]
+        val y0 = py[0]
+        var maxD = 0f
+        for (i in px.indices) {
+            val d = hypot((px[i] - x0).toDouble(), (py[i] - y0).toDouble()).toFloat()
+            if (d > maxD) maxD = d
+        }
+        if (maxD < dpf(8)) return floatArrayOf(x0) to floatArrayOf(y0)
+        val n = px.size
+        val maxPts = 40
+        val idx: List<Int> = if (n <= maxPts) (0 until n).toList() else (0 until maxPts).map { it * (n - 1) / (maxPts - 1) }
+        return FloatArray(idx.size) { px[idx[it]] } to FloatArray(idx.size) { py[idx[it]] }
     }
 
     fun hide() {
@@ -272,6 +305,7 @@ class ActionEditorOverlay(
         if (old == k) return
         if (a.ms == MacroEdit.defaultMs(old)) a.ms = MacroEdit.defaultMs(k)
         a.kind = k
+        a.pts = null
         if (k == "swipe") {
             a.x2 = a.x1
             a.y2 = if (a.y1 - dp(150) > 0) a.y1 - dp(150) else a.y1 + dp(150)
@@ -421,7 +455,15 @@ class ActionEditorOverlay(
                 val x2 = a.x2.toFloat()
                 val y2 = a.y2.toFloat()
                 ring.color = col; ring.strokeWidth = dpf(3)
-                c.drawLine(x1, y1, x2, y2, ring)
+                val route = a.pts
+                if (route != null && route.size >= 6 && route.size % 2 == 0 &&
+                    route[0].toInt() == a.x1 && route[1].toInt() == a.y1 &&
+                    route[route.size - 2].toInt() == a.x2 && route[route.size - 1].toInt() == a.y2
+                ) {
+                    for (i in 0 until route.size - 2 step 2) c.drawLine(route[i], route[i + 1], route[i + 2], route[i + 3], ring)
+                } else {
+                    c.drawLine(x1, y1, x2, y2, ring)
+                }
                 val ang = atan2((y2 - y1).toDouble(), (x2 - x1).toDouble())
                 for (s in doubleArrayOf(2.6, -2.6)) {
                     c.drawLine(
@@ -460,19 +502,28 @@ class ActionEditorOverlay(
         }
 
         private var recDown = false
-        private var recX0 = 0f
-        private var recY0 = 0f
         private var recT0 = 0L
+        private val recX = ArrayList<Float>()
+        private val recY = ArrayList<Float>()
 
         private fun recordTouch(e: MotionEvent): Boolean {
+            if (dispatching) return true // đang phát lại cú trước: bỏ qua
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { recDown = true; recX0 = e.rawX; recY0 = e.rawY; recT0 = e.eventTime }
+                MotionEvent.ACTION_DOWN -> {
+                    recDown = true
+                    recX.clear(); recY.clear()
+                    recX.add(e.rawX); recY.add(e.rawY)
+                    recT0 = e.eventTime
+                }
+                MotionEvent.ACTION_MOVE -> if (recDown) { recX.add(e.rawX); recY.add(e.rawY) }
                 MotionEvent.ACTION_POINTER_DOWN -> recDown = false // nhiều ngón: bỏ qua cú này
                 MotionEvent.ACTION_UP -> if (recDown) {
                     recDown = false
-                    recorded(recX0.toInt(), recY0.toInt(), e.rawX.toInt(), e.rawY.toInt(), recT0, e.eventTime)
+                    recX.add(e.rawX); recY.add(e.rawY)
+                    recorded(ArrayList(recX), ArrayList(recY), recT0, e.eventTime)
+                    recX.clear(); recY.clear()
                 }
-                MotionEvent.ACTION_CANCEL -> recDown = false
+                MotionEvent.ACTION_CANCEL -> { recDown = false; recX.clear(); recY.clear() }
             }
             return true
         }

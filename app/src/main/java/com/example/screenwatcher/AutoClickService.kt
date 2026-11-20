@@ -79,6 +79,18 @@ class AutoClickService : AccessibilityService() {
 
     suspend fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, dur: Long = 300): Boolean =
         gesture(Path().apply { moveTo(x1, y1); lineTo(x2, y2) }, dur)
+
+    /** Vuốt theo đường đi nhiều điểm (xy = x0,y0,x1,y1,...) — phát lại đúng đường ngón tay đã ghi. */
+    suspend fun path(xy: FloatArray, dur: Long): Boolean {
+        if (xy.size < 4) return false
+        return gesture(
+            Path().apply {
+                moveTo(xy[0], xy[1])
+                for (i in 2 until xy.size - 1 step 2) lineTo(xy[i], xy[i + 1])
+            },
+            dur,
+        )
+    }
 }
 
 /** Hiệu ứng ngắn: vòng tròn cho chạm / giữ, đường + chấm chạy cho vuốt. */
@@ -145,7 +157,7 @@ private class FlashView(
  *   tap_match [dx dy] [ms=..]     chạm vào vị trí vừa tìm thấy (có thể lệch dx, dy; ms=.. để giữ)
  *   tap x y [ms]                  chạm toạ độ (mặc định 60 ms)
  *   longtap x y [ms]              chạm và giữ (mặc định 800 ms)
- *   swipe x1 y1 x2 y2 [ms]        vuốt (mặc định 300 ms)
+ *   swipe x1 y1 x2 y2 [ms] [path=x,y;x,y;...]  vuốt (mặc định 300 ms); path= là đường đi đã ghi (nếu có thì vuốt theo đường đó)
  *   wait ms                       chờ
  *   back | home | recents         phím hệ thống
  *   # ghi chú
@@ -231,7 +243,8 @@ object Macro {
                 "swipe" -> if (a.size >= 4) repeatAction(times, gap) { i ->
                     val d = (a.getOrNull(4)?.toLong()) ?: ms ?: 300L
                     svc.flash("swipe", a[0], a[1], a[2], a[3], d, lab(times, i), sizeDp)
-                    svc.swipe(a[0], a[1], a[2], a[3], d)
+                    val route = MacroEdit.parsePath(opts["path"])
+                    if (route != null) svc.path(route, d) else svc.swipe(a[0], a[1], a[2], a[3], d)
                 }
                 "wait" -> delay((a.getOrNull(0) ?: 500f).toLong())
                 "back" -> svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
