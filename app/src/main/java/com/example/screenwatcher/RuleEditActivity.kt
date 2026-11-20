@@ -34,6 +34,7 @@ class RuleEditActivity : Activity() {
     private lateinit var cool: EditText
     private lateinit var repeatEt: EditText
     private lateinit var repeatDelayEt: EditText
+    private lateinit var delayBeforeEt: EditText
     private lateinit var textGroup: LinearLayout
     private lateinit var imageGroup: LinearLayout
     private lateinit var changeGroup: LinearLayout
@@ -183,6 +184,12 @@ class RuleEditActivity : Activity() {
         }
         root.addView(thenSp)
 
+        root.addView(label("Chờ bao lâu (ms) sau khi luật khớp rồi mới chạy thao tác (0 = chạy ngay)"))
+        delayBeforeEt = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.delayBeforeMs.toString())
+        }
+        root.addView(delayBeforeEt)
+
         root.addView(label("Sau khi chạy hết thao tác, lặp lại tổng cộng (lần). 1 = chỉ 1 lần, 0 = lặp mãi đến khi tắt theo dõi"))
         repeatEt = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.repeatCount.toString())
@@ -265,6 +272,7 @@ class RuleEditActivity : Activity() {
         rule.macro = macro.text.toString()
         rule.cooldownMs = cool.text.toString().toLongOrNull() ?: 3000L
         rule.repeatCount = (repeatEt.text.toString().toIntOrNull() ?: 1).coerceIn(0, 100_000)
+        rule.delayBeforeMs = (delayBeforeEt.text.toString().toLongOrNull() ?: 0L).coerceIn(0L, 3_600_000L)
         rule.repeatDelayMs = (repeatDelayEt.text.toString().toLongOrNull() ?: 500L).coerceAtLeast(0)
         rule.thenProfile = profiles.getOrNull(thenSp.selectedItemPosition - 1)?.id ?: ""
     }

@@ -173,6 +173,11 @@ object Macro {
 
     /** Chạy macro của luật, lặp theo cài đặt của luật (repeatCount: 1 = 1 lần, 0 = mãi mãi). */
     suspend fun runRule(rule: Rule, mx: Int, my: Int) {
+        if (rule.delayBeforeMs > 0) { // chờ rồi mới chạy (toạ độ tap_match giữ theo lúc khớp)
+            AppState.log("⏱ '${rule.name}': chờ ${rule.delayBeforeMs} ms rồi mới chạy")
+            delay(rule.delayBeforeMs)
+            if (!AppState.monitoring) return
+        }
         var n = 0
         while (AppState.monitoring) {
             run(rule.macro, mx, my)

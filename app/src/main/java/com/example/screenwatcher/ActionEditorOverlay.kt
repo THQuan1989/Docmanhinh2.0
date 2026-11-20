@@ -12,6 +12,12 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import android.view.WindowManager
 import android.view.WindowManager.LayoutParams
 import android.widget.Button
@@ -45,6 +51,14 @@ class ActionEditorOverlay(
     private var drawing = true
     private var panelOpen = false   // cửa sổ cài đặt chỉ mở khi giữ 0,8 giây vào một điểm
     private val handle = DragHandle(ctx) { setBarVisible(true) }
+
+    // ---- ghi thao tác: bắt cú chạm / vuốt của người dùng, lưu vào danh sách rồi phát lại cho ứng dụng bên dưới ----
+    private var recording = false
+    private var recCount = 0
+    private var lastEndAt = 0L
+    private var recBtn: Button? = null
+    private var toggleBtn: Button? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val dv = CanvasView(ctx)
     private val bar = LinearLayout(ctx)
@@ -98,12 +112,12 @@ class ActionEditorOverlay(
             setOnClickListener { f() }
         }
         val toggle = mk("✋ Thao tác") {}
+        toggleBtn = toggle
         toggle.setOnClickListener {
+            if (recording) stopRecording()
             drawing = !drawing
-            dvLp.flags = if (drawing) dvLp.flags and LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-            else dvLp.flags or LayoutParams.FLAG_NOT_TOUCHABLE
+            setDvTouchable(drawing)
             toggle.text = if (drawing) "✋ Thao tác" else "✏ Chỉnh"
-            runCatching { wm.updateViewLayout(dv, dvLp) }
             toast(if (drawing) "Đang ở chế độ chỉnh" else "Có thể chuyển sang ứng dụng/màn hình khác, xong bấm ✏ Chỉnh")
         }
         val row = LinearLayout(ctx).apply {
@@ -114,6 +128,9 @@ class ActionEditorOverlay(
         add(mk("✔ Xong") { finish() })
         add(toggle)
         add(mk("＋ Chạm") { addAtCenter() })
+        val rec = mk("⏺ Ghi") { toggleRecording() }
+        recBtn = rec
+        add(rec)
         add(mk("✖ Huỷ") { hide(); onCancel() })
         add(mk("▾ Ẩn") { setBarVisible(false) })
 
@@ -132,7 +149,73 @@ class ActionEditorOverlay(
         if (v) handle.hide() else handle.show()
     }
 
+    private fun setDvTouchable(t: Boolean) {
+        dvLp.flags = if (t) dvLp.flags and LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        else dvLp.flags or LayoutParams.FLAG_NOT_TOUCHABLE
+        runCatching { wm.updateViewLayout(dv, dvLp) }
+    }
+
+    /* ---------------- ghi thao tác màn hình ---------------- */
+
+    private fun toggleRecording() = if (recording) stopRecording() else startRecording()
+
+    private fun startRecording() {
+        if (AutoClickService.instance == null) {
+            toast("Cần bật Dịch vụ trợ năng để ghi (cú chạm được phát lại cho ứng dụng)"); return
+        }
+        if (!drawing) { // đang ở chế độ thao tác xuyên màn hình: bật lại lớp bắt cảm ứng
+            drawing = true
+            toggleBtn?.text = "✋ Thao tác"
+            setDvTouchable(true)
+        }
+        sel = null; panelOpen = false; refreshPanel()
+        recording = true
+        recCount = 0
+        lastEndAt = 0L
+        recBtn?.text = "⏹ Dừng"
+        toast("Đang ghi: cứ thao tác trên màn hình như bình thường, xong bấm ⏹ Dừng")
+        dv.invalidate()
+    }
+
+    private fun stopRecording() {
+        if (!recording) return
+        recording = false
+        recBtn?.text = "⏺ Ghi"
+        setDvTouchable(drawing)
+        toast("Đã ghi $recCount thao tác — bấm ✔ Xong để lưu vào luật")
+        dv.invalidate()
+    }
+
+    /** Lưu một cú chạm / giữ / vuốt vừa ghi và phát lại nó cho ứng dụng bên dưới (lớp phủ đã chặn mất cú chạm thật). */
+    private fun recorded(x1: Int, y1: Int, x2: Int, y2: Int, startAt: Long, endAt: Long) {
+        val dur = (endAt - startAt).coerceAtLeast(1)
+        val dist = hypot((x2 - x1).toDouble(), (y2 - y1).toDouble())
+        val wait = if (recCount == 0) 120L else (startAt - lastEndAt).coerceIn(0L, 600_000L)
+        val act = if (dist < dpf(16)) {
+            if (dur >= 450) TouchAct("longtap", x1, y1, ms = dur.coerceIn(450L, 60_000L), wait = wait)
+            else TouchAct("tap", x1, y1, ms = dur.coerceIn(30L, 300L), wait = wait)
+        } else {
+            TouchAct("swipe", x1, y1, x2, y2, ms = dur.coerceIn(80L, 3000L), wait = wait)
+        }
+        acts.add(act)
+        recCount++
+        lastEndAt = endAt
+        dv.invalidate()
+        // phát lại cho ứng dụng: tạm cho cảm ứng xuyên qua lớp phủ
+        val svc = AutoClickService.instance ?: return
+        scope.launch {
+            setDvTouchable(false)
+            delay(40)
+            if (act.kind == "swipe") svc.swipe(act.x1.toFloat(), act.y1.toFloat(), act.x2.toFloat(), act.y2.toFloat(), act.ms)
+            else svc.tap(act.x1.toFloat(), act.y1.toFloat(), act.ms)
+            delay(60)
+            if (recording && drawing) setDvTouchable(true)
+        }
+    }
+
     fun hide() {
+        recording = false
+        scope.cancel()
         handle.hide()
         runCatching { wm.removeView(dv) }
         runCatching { wm.removeView(bar) }
@@ -317,6 +400,16 @@ class ActionEditorOverlay(
             c.translate(-loc[0].toFloat(), -loc[1].toFloat())
             for ((i, a) in acts.withIndex()) drawAct(c, a, i + 1, a === sel)
             c.restore()
+            if (recording) {
+                ring.color = 0xFFE53935.toInt(); ring.strokeWidth = dpf(6)
+                c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), ring)
+                fillP.color = 0xCCE53935.toInt()
+                c.drawRoundRect(dpf(12), dpf(56), dpf(12) + dpf(230), dpf(56) + dpf(36), dpf(8), dpf(8), fillP)
+                txt.textSize = dpf(15)
+                txt.textAlign = Paint.Align.LEFT
+                c.drawText("● ĐANG GHI  ($recCount)", dpf(22), dpf(80), txt)
+                txt.textAlign = Paint.Align.CENTER
+            }
         }
 
         private fun drawAct(c: Canvas, a: TouchAct, no: Int, selected: Boolean) {
@@ -366,7 +459,26 @@ class ActionEditorOverlay(
             return null
         }
 
+        private var recDown = false
+        private var recX0 = 0f
+        private var recY0 = 0f
+        private var recT0 = 0L
+
+        private fun recordTouch(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { recDown = true; recX0 = e.rawX; recY0 = e.rawY; recT0 = e.eventTime }
+                MotionEvent.ACTION_POINTER_DOWN -> recDown = false // nhiều ngón: bỏ qua cú này
+                MotionEvent.ACTION_UP -> if (recDown) {
+                    recDown = false
+                    recorded(recX0.toInt(), recY0.toInt(), e.rawX.toInt(), e.rawY.toInt(), recT0, e.eventTime)
+                }
+                MotionEvent.ACTION_CANCEL -> recDown = false
+            }
+            return true
+        }
+
         override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (recording) return recordTouch(e)
             val x = e.rawX
             val y = e.rawY
             when (e.action) {

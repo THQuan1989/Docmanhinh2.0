@@ -43,13 +43,15 @@ data class Rule(
     var thenProfile: String = "",
     /** Kiểu IMAGE: khung đã khoanh để cắt ảnh mẫu (để lần sau mở lên chỉ cần chỉnh khung, không phải vẽ lại). */
     var tplRegion: Region? = null,
+    /** Sau khi luật khớp: chờ bấy nhiêu ms rồi mới chạy macro (0 = chạy ngay). */
+    var delayBeforeMs: Long = 0L,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
         .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
-        .put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
+        .put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
         .also { o -> tplRegion?.let { o.put("tplRegion", it.toJson()) } }
 
@@ -81,6 +83,7 @@ data class Rule(
                 changeMode = o.optString("changeMode", CH_IMAGE),
                 diffThreshold = o.optDouble("diffThreshold", 0.10),
                 thenProfile = o.optString("thenProfile", ""),
+                delayBeforeMs = o.optLong("delayBeforeMs", 0L),
                 tplRegion = o.optJSONArray("tplRegion")?.let { runCatching { Region.from(it) }.getOrNull() },
             )
         }
