@@ -12,6 +12,12 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.view.View
 import android.view.Gravity
 import android.widget.Button
 import android.widget.CheckBox
@@ -41,6 +47,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var feedbackSwitch: Switch
     private lateinit var cyclesEt: EditText
     private lateinit var intervalEt: EditText
+    private lateinit var gapEt: EditText
+    private var lastStatus = ""
     private var updating = false
     private val h = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
@@ -81,19 +89,13 @@ class MainActivity : ComponentActivity() {
         root.addView(TextView(this).apply {
             text = "Quét chữ / hình ảnh trong các vùng đã chọn, khớp thì tự động chạm hoặc chạy macro."
         })
-        status = TextView(this).apply { setPadding(0, dp(8), 0, dp(8)) }
+        // dòng trạng thái quyền: chạm vào từng mục để đi tới màn hình cấp quyền tương ứng
+        status = TextView(this).apply {
+            setPadding(0, dp(8), 0, dp(8))
+            movementMethod = LinkMovementMethod.getInstance()
+            highlightColor = Color.TRANSPARENT
+        }
         root.addView(status)
-
-        root.addView(btn("1. Cấp quyền hiển thị trên ứng dụng khác") {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-        })
-        root.addView(btn("2. Bật Dịch vụ trợ năng (ScreenWatcher)") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        })
-        root.addView(btn("3. Cấp quyền chụp màn hình") {
-            val mpm = getSystemService(MediaProjectionManager::class.java)
-            projLauncher.launch(mpm.createScreenCaptureIntent())
-        })
 
         monitorSwitch = Switch(this).apply {
             text = "Bật theo dõi"; setPadding(0, dp(12), 0, dp(4))
@@ -158,6 +160,16 @@ class MainActivity : ComponentActivity() {
         cy.addView(cyclesEt)
         root.addView(cy)
 
+        val gp = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        gp.addView(TextView(this).apply { text = "Nghỉ giữa các vòng (giây): " })
+        gapEt = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(fmtSec(RuleStore.seqGap(this@MainActivity)))
+            minEms = 4
+        }
+        gp.addView(gapEt)
+        root.addView(gp)
+
         val iv = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         iv.addView(TextView(this).apply { text = "Quét mỗi (ms): " })
         intervalEt = EditText(this).apply {
@@ -195,6 +207,19 @@ class MainActivity : ComponentActivity() {
     private fun saveInterval() {
         intervalEt.text.toString().toLongOrNull()?.let { RuleStore.setInterval(this, it) }
         cyclesEt.text.toString().toIntOrNull()?.let { RuleStore.setSeqCycles(this, it) }
+        gapEt.text.toString().replace(',', '.').toDoubleOrNull()?.let { RuleStore.setSeqGap(this, (it * 1000).toLong()) }
+    }
+
+    private fun fmtSec(ms: Long) = if (ms % 1000 == 0L) (ms / 1000).toString() else (ms / 1000.0).toString()
+
+    private fun requestOverlay() =
+        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+
+    private fun requestAccessibility() = startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+
+    private fun requestProjection() {
+        val mpm = getSystemService(MediaProjectionManager::class.java)
+        projLauncher.launch(mpm.createScreenCaptureIntent())
     }
 
     override fun onResume() {
@@ -269,6 +294,7 @@ class MainActivity : ComponentActivity() {
         // cập nhật ô cài đặt trên màn hình
         h.postDelayed({
             cyclesEt.setText(RuleStore.seqCycles(this).toString())
+            gapEt.setText(fmtSec(RuleStore.seqGap(this)))
             intervalEt.setText(RuleStore.interval(this).toString())
             updating = true; seqSwitch.isChecked = RuleStore.seqOn(this); updating = false
             rebuildList()
@@ -347,12 +373,34 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshStatus() {
-        fun m(ok: Boolean) = if (ok) "✔" else "✘"
-        status.text = "Hiển thị trên app khác: ${m(Settings.canDrawOverlays(this))}   " +
-            "Trợ năng: ${m(AutoClickService.instance != null)}   " +
-            "Chụp màn hình: ${m(AppState.projectionReady)}" +
-            ProfileStore.activeNames(this).let { if (it.isEmpty()) "" else "\nĐang dùng: " + it.joinToString(" + ") } +
-            (if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) "\n${AppState.seqStatus}" else "")
+        val okO = Settings.canDrawOverlays(this)
+        val okA = AutoClickService.instance != null
+        val okP = AppState.projectionReady
+        val extra = ProfileStore.activeNames(this).let { if (it.isEmpty()) "" else "\nĐang dùng: " + it.joinToString(" + ") } +
+            (if (AppState.monitoring && AppState.seqStatus.isNotEmpty()) "\n${AppState.seqStatus}" else "") +
+            (if (okO && okA && okP) "" else "\nChạm vào mục ✘ để cấp quyền.")
+        val key = "$okO|$okA|$okP|$extra"
+        if (key != lastStatus) { // chỉ dựng lại khi nội dung đổi, để chạm vào liên kết không bị ngắt giữa chừng
+            lastStatus = key
+            val sb = SpannableStringBuilder()
+            fun item(label: String, ok: Boolean, go: () -> Unit) {
+                val start = sb.length
+                sb.append("$label: ${if (ok) "✔" else "✘"}")
+                sb.setSpan(object : ClickableSpan() {
+                    override fun onClick(w: View) = go()
+                    override fun updateDrawState(ds: TextPaint) {
+                        ds.color = if (ok) 0xFF2E7D32.toInt() else 0xFFC62828.toInt()
+                        ds.isUnderlineText = true
+                    }
+                }, start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                sb.append("   ")
+            }
+            item("Hiển thị trên app khác", okO) { requestOverlay() }
+            item("Trợ năng", okA) { requestAccessibility() }
+            item("Chụp màn hình", okP) { requestProjection() }
+            sb.append(extra)
+            status.text = sb
+        }
         updating = true
         monitorSwitch.isChecked = AppState.monitoring
         bubbleSwitch.isChecked = RuleStore.bubbleOn(this)

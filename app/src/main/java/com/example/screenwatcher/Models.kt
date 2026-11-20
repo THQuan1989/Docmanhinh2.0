@@ -134,6 +134,9 @@ object RuleStore {
     /** Chạy tuần tự: luật 1 -> 2 -> 3 ... xong hết thì lặp lại theo số vòng (0 = mãi). */
     fun seqOn(c: Context): Boolean = prefs(c).getBoolean("seqOn", false)
     fun setSeqOn(c: Context, on: Boolean) = prefs(c).edit().putBoolean("seqOn", on).apply()
+    /** Thời gian nghỉ (ms) giữa hai vòng khi chạy tuần tự (0 = không nghỉ). */
+    fun seqGap(c: Context): Long = prefs(c).getLong("seqGap", 0L)
+    fun setSeqGap(c: Context, ms: Long) = prefs(c).edit().putLong("seqGap", ms.coerceIn(0L, 86_400_000L)).apply()
     fun seqCycles(c: Context): Int = prefs(c).getInt("seqCycles", 1)
     fun setSeqCycles(c: Context, n: Int) = prefs(c).edit().putInt("seqCycles", n.coerceIn(0, 100_000)).apply()
 

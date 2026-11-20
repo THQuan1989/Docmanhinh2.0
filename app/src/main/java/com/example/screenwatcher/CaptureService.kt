@@ -73,6 +73,7 @@ class CaptureService : Service() {
     private var editor: ActionEditorOverlay? = null
     private var seqIndex = 0
     private var seqCycle = 0
+    @Volatile private var seqResumeAt = 0L // đang nghỉ giữa hai vòng đến thời điểm này
     private var seqLogged = -1
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -99,7 +100,7 @@ class CaptureService : Service() {
         val was = AppState.monitoring
         AppState.monitoring = on && projection != null
         if (AppState.monitoring && !was) {
-            seqIndex = 0; seqCycle = 0; seqLogged = -1; ChangeMatcher.resetLatches()
+            seqIndex = 0; seqCycle = 0; seqLogged = -1; seqResumeAt = 0L; ChangeMatcher.resetLatches()
             monitorStartAt = SystemClock.elapsedRealtime()
         }
         if (!AppState.monitoring) AppState.seqStatus = ""
@@ -340,6 +341,11 @@ class CaptureService : Service() {
         if (rules.isEmpty()) return
         if (seqIndex >= rules.size) seqIndex = 0
         val total = RuleStore.seqCycles(this)
+        val rest = seqResumeAt - System.currentTimeMillis()
+        if (rest > 0) {
+            AppState.seqStatus = "Tuần tự: nghỉ giữa các vòng, còn ${(rest + 999) / 1000} giây"
+            return
+        }
         val rule = rules[seqIndex]
         val cyc = if (total == 0) "${seqCycle + 1}" else "${seqCycle + 1}/$total"
         AppState.seqStatus = "Tuần tự: vòng $cyc • đang chờ luật ${seqIndex + 1}/${rules.size} '${rule.name}'"
@@ -362,7 +368,13 @@ class CaptureService : Service() {
                 setMonitoring(false)
                 return
             }
-            AppState.log("↻ Bắt đầu vòng ${seqCycle + 1}" + (if (total == 0) "" else "/$total"))
+            val gap = RuleStore.seqGap(this)
+            if (gap > 0) {
+                seqResumeAt = System.currentTimeMillis() + gap
+                AppState.log("⏸ Nghỉ ${gap / 1000.0} giây rồi bắt đầu vòng ${seqCycle + 1}" + (if (total == 0) "" else "/$total"))
+            } else {
+                AppState.log("↻ Bắt đầu vòng ${seqCycle + 1}" + (if (total == 0) "" else "/$total"))
+            }
         }
     }
 
