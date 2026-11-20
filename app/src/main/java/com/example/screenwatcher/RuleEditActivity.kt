@@ -283,7 +283,10 @@ class RuleEditActivity : Activity() {
             Intent(this, CaptureService::class.java)
                 .setAction(CaptureService.A_PICK).putExtra("mode", mode).putExtra("id", rule.id).apply(extra),
         )
-        AppToast.show(this, "Mở màn hình cần chọn rồi kéo trên lớp phủ. Bấm ✋ để thao tác app, ✏ để vẽ lại.", Toast.LENGTH_LONG)
+        AppToast.show(this, "Kéo trên lớp phủ để chọn. Bấm ✋ để thao tác app, ✏ để vẽ lại.", Toast.LENGTH_SHORT)
+        // đưa ScreenWatcher xuống nền để hiện ngay màn hình ứng dụng gần nhất vừa dùng, rồi đóng màn hình sửa
+        // (chọn xong / huỷ, dịch vụ sẽ tự mở lại màn hình sửa luật)
+        moveTaskToBack(true)
         finish()
     }
 }
