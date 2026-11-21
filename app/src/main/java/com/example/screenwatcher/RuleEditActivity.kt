@@ -158,7 +158,49 @@ class RuleEditActivity : Activity() {
         macro = EditText(this).apply {
             setText(rule.macro); minLines = 3; gravity = android.view.Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            visibility = View.GONE // mặc định thu gọn: log macro (nhất là các dòng path=...) rất dài
         }
+        fun lineCount() = macro.text.lines().count { it.isNotBlank() }
+        val macroInfo = TextView(this).apply { textSize = 13f; setTextColor(Color.DKGRAY) }
+        fun refreshMacroInfo() {
+            macroInfo.text = "Macro: ${lineCount()} dòng" + if (macro.visibility == View.GONE) " (đang ẩn)" else ""
+        }
+        refreshMacroInfo()
+        macro.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+            override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = refreshMacroInfo()
+        })
+        var cleared: String? = null // nội dung vừa xoá, để hoàn tác
+        val showBtn = btn("▾ Hiện macro") {}
+        val clearBtn = btn("🗑 Xoá macro") {}
+        showBtn.setOnClickListener {
+            val show = macro.visibility == View.GONE
+            macro.visibility = if (show) View.VISIBLE else View.GONE
+            showBtn.text = if (show) "▴ Ẩn macro" else "▾ Hiện macro"
+            refreshMacroInfo()
+        }
+        clearBtn.setOnClickListener {
+            val prev = cleared
+            if (prev == null) {
+                cleared = macro.text.toString()
+                macro.setText("")
+                clearBtn.text = "↩ Hoàn tác xoá"
+                Toast.makeText(this, "Đã xoá macro (bấm ↩ để khôi phục)", Toast.LENGTH_SHORT).show()
+            } else {
+                macro.setText(prev)
+                cleared = null
+                clearBtn.text = "🗑 Xoá macro"
+            }
+        }
+        root.addView(macroInfo)
+        root.addView(
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(showBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(clearBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            },
+        )
         root.addView(macro)
         root.addView(TextView(this).apply {
             textSize = 11f

@@ -615,8 +615,19 @@ class CaptureService : Service() {
             onCancel = {
                 AppState.picking = false
                 editor = null
+                // Huỷ: bỏ cả những gì đã tự lưu khi bấm Dừng, trả macro về như lúc mở
+                (RuleStore.get(this, id) ?: rule).let { r ->
+                    if (r.macro != base) { r.macro = base; RuleStore.upsert(this, r) }
+                }
                 showBubble()
                 reopenEditor(id)
+            },
+            onSave = { acts ->
+                (RuleStore.get(this, id) ?: rule).let { r ->
+                    r.macro = MacroEdit.apply(base, acts)
+                    RuleStore.upsert(this, r)
+                }
+                AppState.log("Đã lưu ${acts.size} điểm chạm/vuốt cho '${rule.name}'")
             },
         ).also { it.show() }
     }

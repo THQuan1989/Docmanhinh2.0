@@ -41,6 +41,7 @@ class ActionEditorOverlay(
     private val acts: MutableList<TouchAct>,
     private val onDone: (List<TouchAct>) -> Unit,
     private val onCancel: () -> Unit,
+    private val onSave: ((List<TouchAct>) -> Unit)? = null, // lưu ngay vào luật (không đóng màn hình chỉnh), gọi khi bấm Dừng
 ) {
     private val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val density = ctx.resources.displayMetrics.density
@@ -108,6 +109,7 @@ class ActionEditorOverlay(
 
         fun mk(t: String, f: () -> Unit) = Button(ctx).apply {
             text = t; isAllCaps = false; textSize = 13f
+            maxLines = 1
             minWidth = 0; minimumWidth = 0
             setPadding(dp(4), 0, dp(4), 0)
             setOnClickListener { f() }
@@ -125,15 +127,18 @@ class ActionEditorOverlay(
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xCC000000.toInt())
         }
-        fun add(b: View) = row.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        add(mk("✔ Xong") { finish() })
-        add(toggle)
-        add(mk("＋ Chạm") { addAtCenter() })
-        val rec = mk("⏺ Ghi") { toggleRecording() }
+        // nút chữ (Xong / Thao tác / Chạm) rộng hơn, nút biểu tượng (Ghi / Huỷ / Ẩn) thu nhỏ để "Thao tác" vừa một dòng
+        fun add(b: View, w: Float) = row.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w))
+        add(mk("✔ Xong") { finish() }, 1.2f)
+        add(toggle, 1.7f)
+        add(mk("＋ Chạm") { addAtCenter() }, 1.3f)
+        // Ghi / Huỷ / Ẩn: giữ nguyên tên, chỉ thu hẹp nút (chữ nhỏ hơn một chút, lề hẹp)
+        fun small(b: Button) = b.apply { textSize = 12f; setPadding(dp(2), 0, dp(2), 0) }
+        val rec = small(mk("⏺ Ghi") { toggleRecording() })
         recBtn = rec
-        add(rec)
-        add(mk("✖ Huỷ") { hide(); onCancel() })
-        add(mk("▾ Ẩn") { setBarVisible(false) })
+        add(rec, 0.8f)
+        add(small(mk("✖ Huỷ") { hide(); onCancel() }), 0.8f)
+        add(small(mk("▾ Ẩn") { setBarVisible(false) }), 0.8f)
 
         bar.orientation = LinearLayout.VERTICAL
         bar.addView(panel)
@@ -185,7 +190,8 @@ class ActionEditorOverlay(
         dispatching = false
         recBtn?.text = "⏺ Ghi"
         setDvTouchable(drawing)
-        toast("Đã ghi $recCount thao tác — bấm ✔ Xong để lưu vào luật")
+        if (recCount > 0) onSave?.invoke(acts.toList()) // bấm Dừng cũng lưu thao tác vừa ghi
+        toast("Đã ghi và lưu $recCount thao tác")
         dv.invalidate()
     }
 
