@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var profileList: LinearLayout
     private lateinit var profileDropdown: Button
     private var selectedProfileId: String? = null
+    private lateinit var backupBox: LinearLayout
     private var dropdownOpen = false
     private lateinit var monitorSwitch: Switch
     private lateinit var bubbleSwitch: Switch
@@ -69,6 +70,15 @@ class MainActivity : ComponentActivity() {
         }
     }
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    /** Chọn thư mục riêng để sao lưu bộ luật (còn nguyên khi cài lại app). */
+    private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            ProfileBackup.setTree(this, uri)
+            rebuildBackupRow()
+            syncBackup("Đã chọn thư mục '${ProfileBackup.label(this)}'")
+        }
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -185,6 +195,8 @@ class MainActivity : ComponentActivity() {
         root.addView(profileDropdown)
         profileList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(profileList)
+        backupBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(backupBox)
 
         root.addView(TextView(this).apply {
             text = "Danh sách luật"; textSize = 18f; setTextColor(Color.BLACK); setPadding(0, dp(16), 0, dp(4))
@@ -202,6 +214,7 @@ class MainActivity : ComponentActivity() {
         root.addView(logView)
 
         setContentView(ScrollView(this).apply { addView(root) })
+        if (savedInstanceState == null) autoRestore() // chỉ khi mở app mới, không chạy lại khi xoay màn hình
     }
 
     private fun saveInterval() {
@@ -226,6 +239,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         rebuildList()
         rebuildProfiles()
+        rebuildBackupRow()
         h.post(ticker)
     }
 
@@ -370,6 +384,69 @@ class MainActivity : ComponentActivity() {
             btns.addView(smallBtn("Hủy") { selectedProfileId = null; dropdownOpen = false; rebuildProfiles() })
             profileList.addView(HorizontalScrollView(this).apply { addView(btns) })
         }
+    }
+
+    /* ---------------- thư mục sao lưu bộ luật ---------------- */
+
+    private fun rebuildBackupRow() {
+        backupBox.removeAllViews()
+        val has = ProfileBackup.treeUri(this) != null
+        val ok = has && ProfileBackup.hasAccess(this)
+        backupBox.addView(btn(
+            when {
+                !has -> "📁 Chọn thư mục lưu bộ luật (giữ lại khi cài lại app)"
+                ok -> "📁 Thư mục: ${ProfileBackup.label(this)}"
+                else -> "📁 Mất quyền thư mục '${ProfileBackup.label(this)}' — bấm để chọn lại"
+            },
+        ) { folderPicker.launch(null) })
+        if (has) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            row.addView(smallBtn("🔄 Đồng bộ ngay") { syncBackup("Đã đồng bộ") })
+            row.addView(smallBtn("✖ Bỏ thư mục") { ProfileBackup.clear(this); rebuildBackupRow() })
+            backupBox.addView(HorizontalScrollView(this).apply { addView(row) })
+            backupBox.addView(TextView(this).apply {
+                text = "Mỗi lần Lưu / Sửa / Xoá bộ luật, thư mục này tự cập nhật. Cài lại app: chọn lại đúng thư mục này là có đủ bộ luật."
+                textSize = 12f; setTextColor(Color.DKGRAY)
+            })
+        }
+    }
+
+    /** Ghi tất cả bộ luật ra thư mục, rồi nạp thêm những bộ còn thiếu từ thư mục (luồng nền). */
+    private fun syncBackup(msg: String) {
+        Thread {
+            val out = ProfileBackup.exportAll(this)
+            val inn = ProfileBackup.importAll(this, overwrite = false)
+            runOnUiThread {
+                rebuildProfiles()
+                Toast.makeText(this, "$msg • ghi $out, nạp thêm $inn bộ luật", Toast.LENGTH_LONG).show()
+            }
+        }.start()
+    }
+
+    /** Mở app: tự nạp bộ luật còn thiếu từ thư mục; nếu danh sách luật đang trống thì nạp luôn bộ lưu gần nhất. */
+    private fun autoRestore() {
+        if (ProfileBackup.treeUri(this) == null) return
+        Thread {
+            val inn = ProfileBackup.importAll(this, overwrite = false)
+            val latest = if (RuleStore.load(this).isEmpty()) ProfileStore.list(this).maxByOrNull { it.savedAt } else null
+            val loaded: Profile? = if (latest != null && ProfileStore.load(this, latest.id)) latest else null
+            if (inn == 0 && loaded == null) return@Thread
+            runOnUiThread {
+                if (loaded != null) {
+                    selectedProfileId = loaded.id
+                    cyclesEt.setText(RuleStore.seqCycles(this).toString())
+                    gapEt.setText(fmtSec(RuleStore.seqGap(this)))
+                    intervalEt.setText(RuleStore.interval(this).toString())
+                    updating = true; seqSwitch.isChecked = RuleStore.seqOn(this); updating = false
+                }
+                rebuildList(); rebuildProfiles()
+                Toast.makeText(
+                    this,
+                    "Đã khôi phục $inn bộ luật từ thư mục" + (loaded?.let { " và nạp '${it.name}' — bấm bật theo dõi là chạy" } ?: ""),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }.start()
     }
 
     private fun refreshStatus() {

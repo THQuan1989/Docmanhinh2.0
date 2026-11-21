@@ -20,6 +20,7 @@ object ProfileStore {
 
     private fun root(c: Context) = File(c.filesDir, "profiles").apply { mkdirs() }
     private fun dir(c: Context, id: String) = File(root(c), id)
+    internal fun dirOf(c: Context, id: String) = dir(c, id)
 
     private fun readJson(c: Context, id: String): JSONObject? = runCatching {
         JSONObject(File(dir(c, id), FILE).readText())
@@ -58,6 +59,7 @@ object ProfileStore {
             val bf = ChangeMatcher.baseFile(c, r.id)
             if (bf.exists()) bf.copyTo(File(d, bf.name), overwrite = true)
         }
+        ProfileBackup.async { ProfileBackup.export(c, id) } // chép thêm ra thư mục sao lưu (nếu đã chọn)
         return Profile(id, clean, now, rules.size)
     }
 
@@ -137,11 +139,15 @@ object ProfileStore {
         val other = findByName(c, clean)
         if (other != null && other.id != id) return false
         val o = readJson(c, id) ?: return false
+        val oldName = o.optString("name", "")
         File(dir(c, id), FILE).writeText(o.put("name", clean).toString())
+        ProfileBackup.async { ProfileBackup.deleteByName(c, oldName); ProfileBackup.export(c, id) }
         return true
     }
 
     fun delete(c: Context, id: String) {
+        val name = readJson(c, id)?.optString("name", "") ?: ""
         dir(c, id).deleteRecursively()
+        if (name.isNotEmpty()) ProfileBackup.async { ProfileBackup.deleteByName(c, name) }
     }
 }
