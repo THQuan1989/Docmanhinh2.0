@@ -13,11 +13,12 @@ class TouchAct(
     var wait: Long = 120L,     // chờ bao lâu (ms) rồi mới chạm điểm này
     var size: Int = 44,        // kích thước nút trên màn hình (dp)
     var pts: FloatArray? = null, // đường đi đã ghi của cú vuốt: x0,y0,x1,y1,... (null = vuốt thẳng từ điểm đầu tới điểm cuối)
+    var rec: Boolean = false,  // true = thao tác ghi bằng nút Ghi (không hiện trên màn hình chỉnh); false = điểm thêm tay (hiện)
     val line: Int = -1,        // chỉ số dòng gốc trong macro (-1 = thao tác mới)
 ) {
     fun toLine(): String =
         (if (kind == "swipe") "swipe $x1 $y1 $x2 $y2 $ms" + pathOpt() else "$kind $x1 $y1 $ms") +
-            Macro.suffix(times, gap, wait, size)
+            Macro.suffix(times, gap, wait, size) + (if (rec) " rec=1" else "")
 
     /** path=x,y;x,y;... chỉ ghi khi đường đi còn khớp điểm đầu / điểm cuối (kéo điểm đi chỗ khác thì bỏ đường cong, vuốt thẳng). */
     private fun pathOpt(): String {
@@ -73,13 +74,14 @@ object MacroEdit {
             val ms = opts["ms"]?.toLongOrNull()
             val wait = (opts["wait"]?.toLongOrNull() ?: 120L).coerceAtLeast(0)
             val size = (opts["size"]?.toIntOrNull() ?: 44).coerceIn(16, 200)
+            val rec = opts["rec"] == "1"
             val k = p[0].lowercase()
             if ((k == "tap" || k == "longtap") && a.size >= 2) {
                 out.add(
                     TouchAct(
                         k, a[0].toInt(), a[1].toInt(),
                         ms = a.getOrNull(2)?.toLong() ?: ms ?: defaultMs(k),
-                        times = times, gap = gap, wait = wait, size = size, line = idx,
+                        times = times, gap = gap, wait = wait, size = size, rec = rec, line = idx,
                     ),
                 )
             } else if (k == "swipe" && a.size >= 4) {
@@ -87,7 +89,7 @@ object MacroEdit {
                     TouchAct(
                         "swipe", a[0].toInt(), a[1].toInt(), a[2].toInt(), a[3].toInt(),
                         ms = a.getOrNull(4)?.toLong() ?: ms ?: defaultMs("swipe"),
-                        times = times, gap = gap, wait = wait, size = size, pts = parsePath(opts["path"]), line = idx,
+                        times = times, gap = gap, wait = wait, size = size, pts = parsePath(opts["path"]), rec = rec, line = idx,
                     ),
                 )
             }

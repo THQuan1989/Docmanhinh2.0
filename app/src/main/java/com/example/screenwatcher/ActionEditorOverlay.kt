@@ -200,13 +200,13 @@ class ActionEditorOverlay(
         val wait = if (recCount == 0) 0L else (startAt - lastEndAt).coerceAtLeast(0L)
         val (xs, ys) = simplify(px, py)
         val act = if (xs.size == 1) {
-            if (dur >= 450) TouchAct("longtap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait)
-            else TouchAct("tap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait)
+            if (dur >= 450) TouchAct("longtap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait, rec = true)
+            else TouchAct("tap", xs[0].toInt(), ys[0].toInt(), ms = dur, wait = wait, rec = true)
         } else {
             val n = xs.size
             TouchAct(
                 "swipe", xs[0].toInt(), ys[0].toInt(), xs[n - 1].toInt(), ys[n - 1].toInt(), ms = dur, wait = wait,
-                pts = FloatArray(n * 2) { if (it % 2 == 0) xs[it / 2] else ys[it / 2] },
+                pts = FloatArray(n * 2) { if (it % 2 == 0) xs[it / 2] else ys[it / 2] }, rec = true,
             )
         }
         acts.add(act)
@@ -261,7 +261,7 @@ class ActionEditorOverlay(
 
     private fun addAtCenter() {
         val (w, h) = screen()
-        val a = TouchAct("tap", w / 2 + (acts.size % 5) * dp(30) - dp(60), h / 2)
+        val a = TouchAct("tap", w / 2 + (acts.size % 5) * dp(30) - dp(60), h / 2, size = 20)
         acts.add(a)
         sel = a
         refreshPanel()
@@ -369,7 +369,7 @@ class ActionEditorOverlay(
             stepper("Chờ rồi chạm (ms)", a.wait, { v -> if (v < 1000) 50L else 100L }, 0L, 600_000L) { a.wait = it },
         )
         panel.addView(
-            stepper("Kích thước nút (dp)", a.size.toLong(), { _ -> 4L }, 24L, 120L) { a.size = it.toInt() },
+            stepper("Kích thước nút (dp)", a.size.toLong(), { _ -> 4L }, 16L, 120L) { a.size = it.toInt() },
         )
         panel.addView(
             chip("🗑 Xoá điểm này", false) { acts.remove(a); sel = null; refreshPanel() },
@@ -405,7 +405,7 @@ class ActionEditorOverlay(
         private val longRun = Runnable {
             if (dragAct == null && !moved) {
                 longFired = true
-                val a = TouchAct("tap", downX.toInt(), downY.toInt())
+                val a = TouchAct("tap", downX.toInt(), downY.toInt(), size = 20)
                 acts.add(a)
                 sel = a
                 dragAct = a
@@ -433,8 +433,19 @@ class ActionEditorOverlay(
                 c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), recTint)
                 return
             }
-            // không vẽ các thao tác (số 1, 2, 3, đường vuốt) lên màn hình cho đỡ rối mắt
             c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), dim)
+            // chỉ vẽ điểm thêm tay bằng ＋ Chạm; thao tác ghi bằng nút Ghi thì không hiện
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            c.save()
+            c.translate(-loc[0].toFloat(), -loc[1].toFloat())
+            var no = 0
+            for (a in acts) {
+                if (a.rec) continue
+                no++
+                drawAct(c, a, no, a === sel)
+            }
+            c.restore()
         }
 
         private fun drawAct(c: Canvas, a: TouchAct, no: Int, selected: Boolean) {
@@ -485,6 +496,7 @@ class ActionEditorOverlay(
 
         private fun hitTest(x: Float, y: Float): Pair<TouchAct, Boolean>? {
             for (a in acts.asReversed()) {
+                if (a.rec) continue
                 val rad = max(dpf(30), dpf(a.size) / 2f + dpf(6))
                 if (a.kind == "swipe" && hypot(x - a.x2, y - a.y2) < rad) return a to true
                 if (hypot(x - a.x1, y - a.y1) < rad) return a to false
