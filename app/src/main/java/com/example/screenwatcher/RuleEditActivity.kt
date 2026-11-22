@@ -44,6 +44,11 @@ class RuleEditActivity : Activity() {
     private lateinit var aiLabelEt: EditText
     private lateinit var aiCountEt: EditText
     private lateinit var aiInfo: TextView
+    private lateinit var invOnCb: CheckBox
+    private lateinit var invProtectEt: EditText
+    private lateinit var invMaxEt: EditText
+    private lateinit var invSettleEt: EditText
+    private lateinit var invDryCb: CheckBox
     private lateinit var changeMode: Spinner
     private lateinit var diffThr: EditText
     private lateinit var baseTv: TextView
@@ -157,6 +162,46 @@ class RuleEditActivity : Activity() {
             setText(rule.aiMinCount.toString())
         }
         aiGroup.addView(aiCountEt)
+        // --- Inventory Protector ---
+        invOnCb = CheckBox(this).apply {
+            text = "🛡 Inventory Protector: giữ nguyên vật chỉ định, các vật còn lại vào hàng đợi JOB (xử lý lần lượt)"
+            isChecked = rule.invOn
+        }
+        aiGroup.addView(invOnCb)
+        invProtectEt = EditText(this).apply { setText(rule.invProtect); setSingleLine(true); hint = "vd: kiem_hiem|ngoc_do" }
+        aiGroup.addView(label("Vật phẩm GIỮ NGUYÊN (nhãn, cách nhau bằng |). Vật nào không có trong danh sách này sẽ vào hàng đợi"))
+        aiGroup.addView(invProtectEt)
+        aiGroup.addView(btn("👆 Chọn vật GIỮ NGUYÊN trên màn hình (quét sau 4 giây)") {
+            collect(); RuleStore.upsert(this, rule)
+            when {
+                !AppState.projectionReady ->
+                    AppToast.show(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG)
+                !AiDetector.hasModel(this) ->
+                    AppToast.show(this, "Chưa nạp mô hình AI (mục AI ở màn hình chính)", Toast.LENGTH_LONG)
+                else -> {
+                    AppToast.show(this, "Chuyển sang màn hình hành trang trong 4 giây…", Toast.LENGTH_LONG)
+                    startService(
+                        Intent(this, CaptureService::class.java).setAction(CaptureService.A_PICK_ITEMS).putExtra("id", rule.id),
+                    )
+                }
+            }
+        })
+        invMaxEt = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.invMaxJobs.toString()) }
+        aiGroup.addView(label("Tối đa bao nhiêu JOB mỗi lần chạy"))
+        aiGroup.addView(invMaxEt)
+        invSettleEt = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.invSettleMs.toString()) }
+        aiGroup.addView(label("Nghỉ sau mỗi JOB (ms) để màn hình cập nhật rồi quét lại"))
+        aiGroup.addView(invSettleEt)
+        invDryCb = CheckBox(this).apply {
+            text = "Chạy thử: chỉ ghi hàng đợi vào nhật ký, KHÔNG chạm (bỏ chọn khi đã kiểm tra kỹ)"
+            isChecked = rule.invDry
+        }
+        aiGroup.addView(invDryCb)
+        aiGroup.addView(TextView(this).apply {
+            textSize = 11f
+            text = "Macro của luật chạy cho TỪNG vật trong hàng đợi, tap_match chạm đúng vật đó. Ví dụ: tap_match, wait 400, " +
+                "tap <nút Bán>, wait 400, tap <nút Xác nhận>. Vật có điểm dưới ngưỡng không bị đụng tới."
+        })
         aiGroup.addView(TextView(this).apply {
             textSize = 11f
             text = "Nạp mô hình .tflite ở màn hình chính (mục AI). Trong macro: tap_all = chạm lần lượt mọi vật thể tìm thấy; " +
@@ -300,6 +345,8 @@ class RuleEditActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::baseTv.isInitialized) refreshBase()
+        // chọn vật giữ nguyên trên màn hình ghi kết quả vào luật đã lưu: nạp lại vào ô nhập
+        if (::invProtectEt.isInitialized) RuleStore.get(this, rule.id)?.let { invProtectEt.setText(it.invProtect) }
     }
 
     private fun refreshBase() {
@@ -339,6 +386,11 @@ class RuleEditActivity : Activity() {
         rule.type = when (type.selectedItemPosition) { 0 -> Rule.TEXT; 1 -> Rule.IMAGE; 3 -> Rule.AI; else -> Rule.CHANGE }
         rule.aiLabel = aiLabelEt.text.toString().trim()
         rule.aiMinCount = (aiCountEt.text.toString().toIntOrNull() ?: 1).coerceIn(1, 1000)
+        rule.invOn = invOnCb.isChecked && type.selectedItemPosition == 3
+        rule.invProtect = invProtectEt.text.toString().trim()
+        rule.invMaxJobs = (invMaxEt.text.toString().toIntOrNull() ?: 30).coerceIn(1, 500)
+        rule.invSettleMs = (invSettleEt.text.toString().toLongOrNull() ?: 700L).coerceIn(100L, 10_000L)
+        rule.invDry = invDryCb.isChecked
         rule.changeMode = if (changeMode.selectedItemPosition == 1) Rule.CH_TEXT else Rule.CH_IMAGE
         rule.diffThreshold = (diffThr.text.toString().toDoubleOrNull() ?: 0.10).coerceIn(0.01, 1.0)
         rule.text = text.text.toString()

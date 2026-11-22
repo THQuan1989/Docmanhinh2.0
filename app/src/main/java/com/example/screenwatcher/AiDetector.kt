@@ -20,6 +20,9 @@ import java.nio.channels.FileChannel
 object AiDetector {
     class Det(val label: String, val score: Float, val box: Rect)
 
+    /** Một vật AI tìm thấy, toạ độ tâm theo màn hình. */
+    class Item(val label: String, val score: Float, val x: Int, val y: Int, val w: Int = 0, val h: Int = 0)
+
     private const val MODEL = "ai_model.tflite"
     private var det: ObjectDetector? = null
     private var key = ""

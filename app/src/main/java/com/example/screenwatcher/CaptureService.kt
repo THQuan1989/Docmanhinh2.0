@@ -51,6 +51,7 @@ class CaptureService : Service() {
         const val A_PROFILE = "sw.profile"
         const val A_BASELINE = "sw.baseline"
         const val A_SNAP = "sw.snap"
+        const val A_PICK_ITEMS = "sw.pickitems"
         private const val CH = "sw_capture"
     }
 
@@ -72,6 +73,7 @@ class CaptureService : Service() {
     private var loop: Job? = null
     private val lastFire = HashMap<String, Long>()
     private var editor: ActionEditorOverlay? = null
+    private var picker: ItemPickerOverlay? = null
     private var seqIndex = 0
     private var seqCycle = 0
     @Volatile private var seqResumeAt = 0L // đang nghỉ giữa hai vòng đến thời điểm này
@@ -91,6 +93,7 @@ class CaptureService : Service() {
                 i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
             )
             A_BASELINE -> recaptureOriginals(i.getStringExtra("id") ?: "")
+            A_PICK_ITEMS -> pickItems(i.getStringExtra("id") ?: "")
             A_SNAP -> snap(i.getIntExtra("n", 1).coerceIn(1, 200), i.getLongExtra("every", 2000L).coerceAtLeast(300L))
             A_TEST -> test(i.getStringExtra("id") ?: "")
             A_PROFILE -> loadProfile(i.getStringExtra("id") ?: "", i.getBooleanExtra("run", true))
@@ -125,7 +128,7 @@ class CaptureService : Service() {
             fab?.refresh()
             return
         }
-        lastFire.clear()
+        lastFire.clear(); invTries.clear()
         ChangeMatcher.resetLatches()
         AppState.log("📂 Đã nạp bộ luật '$name'")
         if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
@@ -311,7 +314,7 @@ class CaptureService : Service() {
             val hit = safeEval(rule, frame) ?: continue
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             AppState.log("✔ '${rule.name}' ${hitText(rule, hit)}")
-            Macro.runRule(rule, hit.x, hit.y)
+            fire(rule, hit)
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             chain(rule) // có đặt "chạy cả bộ luật" thì chuyển bộ luật
             break // chụp lại khung mới rồi mới xét tiếp
@@ -357,7 +360,7 @@ class CaptureService : Service() {
         }
         val hit = safeEval(rule, frame) ?: return
         AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' ${hitText(rule, hit)}")
-        Macro.runRule(rule, hit.x, hit.y)
+        fire(rule, hit)
         if (!AppState.monitoring) return
         if (chain(rule)) return
         seqIndex++
@@ -393,14 +396,59 @@ class CaptureService : Service() {
     }
 
     private fun hitText(rule: Rule, hit: Hit): String =
-        if (rule.type == Rule.AI) "AI THẤY ${Macro.matches.size} vật thể (cao nhất ${"%.2f".format(hit.score)}) tại ${hit.x},${hit.y}"
+        if (rule.type == Rule.AI && rule.invOn) "INVENTORY — ${Macro.aiDebug}"
+        else if (rule.type == Rule.AI) "AI THẤY ${Macro.matches.size} vật thể (cao nhất ${"%.2f".format(hit.score)}) tại ${hit.x},${hit.y}"
         else if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
         else "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
 
     private fun missText(rule: Rule) = when (rule.type) {
         Rule.CHANGE -> "không thấy thay đổi"
-        Rule.AI -> "không khớp — ${Macro.aiDebug}"
+        Rule.AI -> if (rule.invOn) "Inventory: không còn vật cần xử lý — ${Macro.aiDebug}" else "không khớp — ${Macro.aiDebug}"
         else -> "không khớp"
+    }
+
+    /**
+     * Chọn vật GIỮ NGUYÊN bằng cách chạm trên màn hình: chờ 4 giây để chuyển sang hành trang, quét bằng AI,
+     * hiện các vật tìm thấy, người dùng chạm để chọn loại cần giữ; xong thì ghi nhãn vào ô "Vật phẩm GIỮ NGUYÊN" của luật.
+     */
+    private fun pickItems(id: String) {
+        val rule = RuleStore.get(this, id) ?: return
+        fab?.hide()
+        scope.launch {
+            delay(3400)
+            AppToast.cancel()
+            delay(600)
+            val f = grab()
+            val items = if (f == null) emptyList() else aiScan(rule, f, ignoreLabels = true)
+            main.post {
+                if (items.isEmpty()) {
+                    AppToast.show(
+                        this@CaptureService,
+                        if (f == null) "Chưa có khung hình" else "Không thấy vật nào — ${Macro.aiDebug}",
+                        Toast.LENGTH_LONG,
+                    )
+                    showBubble()
+                    return@post
+                }
+                val old = rule.invProtect.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+                picker = ItemPickerOverlay(
+                    this@CaptureService, items, old.map { it.lowercase() }.toSet(),
+                    onDone = { prot, visible ->
+                        // giữ lại các nhãn đã chọn từ trước nhưng lần quét này không thấy trên màn hình
+                        val unseen = old.filter { it.lowercase() !in visible }
+                        val chosen = items.map { it.label }.distinct().filter { it.lowercase() in prot }
+                        val r = RuleStore.get(this@CaptureService, id) ?: rule
+                        r.invProtect = (unseen + chosen).distinct().joinToString("|")
+                        RuleStore.upsert(this@CaptureService, r)
+                        picker = null
+                        AppState.log("🛡 '${r.name}': vật GIỮ NGUYÊN = ${r.invProtect.ifBlank { "(trống)" }}")
+                        AppToast.show(this@CaptureService, "Đã lưu vật giữ nguyên: ${r.invProtect.ifBlank { "(trống)" }}", Toast.LENGTH_LONG)
+                        showBubble()
+                    },
+                    onCancel = { picker = null; showBubble() },
+                ).also { it.show() }
+            }
+        }
     }
 
     /** Chụp [n] ảnh màn hình (cách nhau [every] ms) lưu làm dữ liệu huấn luyện AI: vào thư mục sao lưu/dataset nếu đã chọn, không thì vào thư mục riêng của app. */
@@ -443,40 +491,120 @@ class CaptureService : Service() {
         }
     }
 
-    /** Luật AI: dùng mô hình .tflite tìm vật thể trong từng vùng quét; đủ số lượng thì trả điểm cao nhất, danh sách đầy đủ để ở Macro.matches. */
-    private suspend fun evalAi(rule: Rule, frame: Bitmap): Hit? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+    /** Quét bằng AI: mọi vật có điểm ≥ ngưỡng (và đúng loại nếu luật giới hạn loại), toạ độ tâm theo màn hình. */
+    private suspend fun aiScan(rule: Rule, frame: Bitmap, ignoreLabels: Boolean = false): List<AiDetector.Item> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val labels = rule.aiLabel.split('|').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
-        val pts = ArrayList<IntArray>()
+        val items = ArrayList<AiDetector.Item>()
         val seen = ArrayList<AiDetector.Det>() // mọi thứ AI thấy, kể cả điểm thấp / sai loại
-        var best = -1f; var bx = 0; var by = 0
         try {
-        for (rg in regs) {
-            val l = rg.l.coerceIn(0, frame.width - 1)
-            val t = rg.t.coerceIn(0, frame.height - 1)
-            val w = rg.r.coerceAtMost(frame.width) - l
-            val h = rg.b.coerceAtMost(frame.height) - t
-            if (w < 8 || h < 8) continue
-            val crop = Bitmap.createBitmap(frame, l, t, w, h)
-            for (d in AiDetector.detect(this@CaptureService, crop)) {
-                seen.add(d)
-                if (d.score < rule.threshold) continue
-                if (labels.isNotEmpty() && d.label.lowercase() !in labels) continue
-                val cx = l + d.box.centerX(); val cy = t + d.box.centerY()
-                pts.add(intArrayOf(cx, cy, (d.score * 1000).toInt()))
-                if (d.score > best) { best = d.score; bx = cx; by = cy }
+            for (rg in regs) {
+                val l = rg.l.coerceIn(0, frame.width - 1)
+                val t = rg.t.coerceIn(0, frame.height - 1)
+                val w = rg.r.coerceAtMost(frame.width) - l
+                val h = rg.b.coerceAtMost(frame.height) - t
+                if (w < 8 || h < 8) continue
+                val crop = Bitmap.createBitmap(frame, l, t, w, h)
+                for (d in AiDetector.detect(this@CaptureService, crop)) {
+                    seen.add(d)
+                    if (d.score < rule.threshold) continue
+                    if (!ignoreLabels && labels.isNotEmpty() && d.label.lowercase() !in labels) continue
+                    items.add(AiDetector.Item(d.label, d.score, l + d.box.centerX(), t + d.box.centerY(), d.box.width(), d.box.height()))
+                }
             }
-        }
         } catch (e: Throwable) {
             Macro.aiDebug = e.message ?: "lỗi AI"
-            return@withContext null
+            return@withContext emptyList<AiDetector.Item>()
         }
         Macro.aiDebug = if (seen.isEmpty()) "AI không thấy vật thể nào (kể cả điểm thấp)"
         else "AI thấy: " + seen.sortedByDescending { it.score }.take(4).joinToString("; ") { "${it.label} ${"%.2f".format(it.score)}" } +
             " — cần loại '${rule.aiLabel.ifBlank { "bất kỳ" }}', điểm ≥ ${"%.2f".format(rule.threshold)}, ≥ ${rule.aiMinCount} vật thể"
-        if (pts.isEmpty() || pts.size < rule.aiMinCount.coerceAtLeast(1)) return@withContext null
-        Macro.matches = pts
-        Hit(bx, by, best.toDouble(), 1.0)
+        items
+    }
+
+    /** Các vật đã thử xử lý nhưng vẫn còn (vd: bấm không ăn): bỏ qua sau 2 lần để không lặp mãi. Key = loại + ô lưới 40px. */
+    private val invTries = HashMap<String, Int>()
+    private fun invKey(i: AiDetector.Item) = "${i.label}@${i.x / 40},${i.y / 40}"
+
+    /** Tách danh sách vật thành (giữ nguyên, hàng đợi JOB). Hàng đợi xếp theo hàng rồi trái sang phải. */
+    private fun invSplit(rule: Rule, items: List<AiDetector.Item>): Pair<List<AiDetector.Item>, List<AiDetector.Item>> {
+        val protect = rule.invProtect.split('|').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+        val kept = items.filter { it.label.lowercase() in protect }
+        val queue = items.filter { it.label.lowercase() !in protect && (invTries[invKey(it)] ?: 0) < 2 }
+            .sortedWith(compareBy({ it.y / 60 }, { it.x }))
+        return kept to queue
+    }
+
+    private fun invSummary(kept: List<AiDetector.Item>, queue: List<AiDetector.Item>): String =
+        "giữ nguyên ${kept.size}" + (if (kept.isNotEmpty()) " (${kept.groupingBy { it.label }.eachCount().entries.joinToString(", ") { "${it.key}×${it.value}" }})" else "") +
+            "; hàng đợi ${queue.size}" + (if (queue.isNotEmpty()) ": " + queue.take(6).joinToString(", ") { "${it.label}(${it.x},${it.y})" } + (if (queue.size > 6) "…" else "") else "")
+
+    /** Luật AI: đủ điều kiện thì trả vật điểm cao nhất, danh sách đầy đủ để ở Macro.matches. Chế độ Inventory: chỉ khớp khi hàng đợi còn vật. */
+    private suspend fun evalAi(rule: Rule, frame: Bitmap): Hit? {
+        val items = aiScan(rule, frame)
+        if (rule.invOn) {
+            val (kept, queue) = invSplit(rule, items)
+            Macro.aiDebug = invSummary(kept, queue)
+            if (queue.isEmpty()) return null
+            Macro.matches = queue.map { intArrayOf(it.x, it.y, (it.score * 1000).toInt()) }
+            return Hit(queue[0].x, queue[0].y, queue[0].score.toDouble(), 1.0)
+        }
+        if (items.isEmpty() || items.size < rule.aiMinCount.coerceAtLeast(1)) return null
+        Macro.matches = items.map { intArrayOf(it.x, it.y, (it.score * 1000).toInt()) }
+        val best = items.maxByOrNull { it.score }!!
+        return Hit(best.x, best.y, best.score.toDouble(), 1.0)
+    }
+
+    /**
+     * Inventory Protector — chạy hàng đợi JOB tuần tự: quét, lấy vật đầu hàng đợi (không thuộc danh sách giữ nguyên),
+     * chạy macro của luật với toạ độ vật đó, nghỉ cho màn hình cập nhật, quét lại... cho đến khi hết vật hoặc đạt giới hạn.
+     * Vật có điểm dưới ngưỡng không bị đụng tới.
+     */
+    private suspend fun runInventory(rule: Rule) {
+        if (rule.invDry) {
+            AppState.log("🛡 Inventory (CHẠY THỬ, không chạm): ${Macro.aiDebug}")
+            return
+        }
+        if (rule.invProtect.isBlank()) {
+            AppState.log("⚠ Inventory '${rule.name}': chưa chỉ định vật phẩm GIỮ NGUYÊN — không chạy để tránh xử lý nhầm tất cả")
+            return
+        }
+        var done = 0
+        val limit = rule.invMaxJobs.coerceIn(1, 500)
+        var lastKey: String? = null
+        var lastSize = -1
+        var stuck = 0 // số lần liên tiếp vật đầu hàng đợi vẫn ở nguyên chỗ cũ mà hàng đợi không ngắn đi
+        while (AppState.monitoring && done < limit) {
+            val f = grab() ?: break
+            val (kept, queue) = invSplit(rule, aiScan(rule, f))
+            if (queue.isEmpty()) break
+            val job = queue[0]
+            val k = invKey(job)
+            // hành trang dồn ô nên vật kế tiếp có thể rơi đúng ô cũ; chỉ coi là "kẹt" khi hàng đợi không ngắn đi sau JOB
+            if (k == lastKey && queue.size >= lastSize) {
+                stuck++
+                if (stuck >= 2) {
+                    invTries[k] = 2
+                    AppState.log("⚠ Bỏ qua ${job.label} tại ${job.x},${job.y}: xử lý 2 lần mà vẫn còn")
+                    lastKey = null; stuck = 0
+                    continue
+                }
+            } else {
+                stuck = 0
+            }
+            lastKey = k; lastSize = queue.size
+            AppState.log("🛡 JOB ${done + 1}: ${job.label} tại ${job.x},${job.y} • còn ${queue.size - 1} trong hàng đợi, giữ nguyên ${kept.size}")
+            Macro.matches = listOf(intArrayOf(job.x, job.y, (job.score * 1000).toInt()))
+            Macro.run(rule.macro, job.x, job.y)
+            done++
+            delay(rule.invSettleMs.coerceAtLeast(100))
+        }
+        AppState.log("🛡 Inventory '${rule.name}' xong: đã xử lý $done vật" + if (done >= limit) " (đạt giới hạn $limit JOB)" else "")
+    }
+
+    /** Chạy phần "làm gì khi khớp" của luật: Inventory thì chạy hàng đợi JOB, còn lại chạy macro như thường. */
+    private suspend fun fire(rule: Rule, hit: Hit) {
+        if (rule.type == Rule.AI && rule.invOn) runInventory(rule) else Macro.runRule(rule, hit.x, hit.y)
     }
 
     private suspend fun evaluate(rule: Rule, frame: Bitmap, test: Boolean = false): Hit? {
@@ -748,6 +876,7 @@ class CaptureService : Service() {
         loop?.cancel()
         overlay?.hide(); overlay = null
         editor?.hide(); editor = null
+        picker?.hide(); picker = null
         fab?.hide(); fab = null
         vd?.release(); vd = null
         reader?.close(); reader = null
