@@ -293,7 +293,7 @@ class LabelActivity : Activity() {
 
     /**
      * Ghi bộ dữ liệu COCO dạng zip đúng cấu trúc MediaPipe Model Maker đọc:
-     *   train/data/*.jpg + train/labels.json  và  validation/data/*.jpg + validation/labels.json
+     *   thư mục train gồm data (các ảnh .jpg) và labels.json; thư mục validation cũng vậy
      * Chỉ dùng các loại có khung; id loại bắt đầu từ 1, id 0 là "background".
      */
     private fun writeCoco(out: OutputStream, labeled: List<Img>, names: List<String>): String {
