@@ -260,10 +260,11 @@ class LabelActivity : Activity() {
                         imgs.add(Img(name, bmp.width, bmp.height))
                         bmp.recycle()
                         n++
+                        Unit
                     }
                     runOnUiThread {
                         save(); showCurrent()
-                        Toast.makeText(this, "Đã thêm $n ảnh", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@LabelActivity, "Đã thêm $n ảnh", Toast.LENGTH_SHORT).show()
                     }
                 }.start()
             }
@@ -274,14 +275,19 @@ class LabelActivity : Activity() {
                 }
                 val names = ArrayList(classes)
                 Thread {
-                    val msg = try {
-                        contentResolver.openOutputStream(uri, "w")?.use { writeCoco(it, snapshot, names) } ?: "Không ghi được file"
-                    } catch (e: Exception) {
-                        "Lỗi xuất: ${e.message}"
-                    }
-                    runOnUiThread { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+                    val msg: String = exportTo(uri, snapshot, names)
+                    runOnUiThread { Toast.makeText(this@LabelActivity, msg, Toast.LENGTH_LONG).show() }
                 }.start()
             }
+        }
+    }
+
+    private fun exportTo(uri: android.net.Uri, snapshot: List<Img>, names: List<String>): String {
+        return try {
+            val os = contentResolver.openOutputStream(uri, "w")
+            if (os == null) "Không ghi được file" else writeCoco(os, snapshot, names)
+        } catch (e: Exception) {
+            "Lỗi xuất: ${e.message}"
         }
     }
 
