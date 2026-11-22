@@ -27,4 +27,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // OCR chạy offline trên máy (mô hình đi kèm trong app)
     implementation("com.google.mlkit:text-recognition:16.0.0")
+    // AI nhận diện vật thể offline (nạp mô hình .tflite tự huấn luyện)
+    implementation("com.google.mediapipe:tasks-vision:0.10.14")
 }

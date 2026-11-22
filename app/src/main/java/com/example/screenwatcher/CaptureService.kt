@@ -50,6 +50,7 @@ class CaptureService : Service() {
         const val A_BUBBLE = "sw.bubble"
         const val A_PROFILE = "sw.profile"
         const val A_BASELINE = "sw.baseline"
+        const val A_SNAP = "sw.snap"
         private const val CH = "sw_capture"
     }
 
@@ -90,6 +91,7 @@ class CaptureService : Service() {
                 i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
             )
             A_BASELINE -> recaptureOriginals(i.getStringExtra("id") ?: "")
+            A_SNAP -> snap(i.getIntExtra("n", 1).coerceIn(1, 200), i.getLongExtra("every", 2000L).coerceAtLeast(300L))
             A_TEST -> test(i.getStringExtra("id") ?: "")
             A_PROFILE -> loadProfile(i.getStringExtra("id") ?: "", i.getBooleanExtra("run", true))
         }
@@ -391,10 +393,34 @@ class CaptureService : Service() {
     }
 
     private fun hitText(rule: Rule, hit: Hit): String =
-        if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
+        if (rule.type == Rule.AI) "AI THẤY ${Macro.matches.size} vật thể (cao nhất ${"%.2f".format(hit.score)}) tại ${hit.x},${hit.y}"
+        else if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
         else "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
 
     private fun missText(rule: Rule) = if (rule.type == Rule.CHANGE) "không thấy thay đổi" else "không khớp"
+
+    /** Chụp [n] ảnh màn hình (cách nhau [every] ms) lưu làm dữ liệu huấn luyện AI: vào thư mục sao lưu/dataset nếu đã chọn, không thì vào thư mục riêng của app. */
+    private fun snap(n: Int, every: Long) {
+        fab?.hide()
+        scope.launch {
+            AppToast.show(this@CaptureService, "Chuyển sang màn hình cần chụp trong 4 giây…", Toast.LENGTH_LONG)
+            delay(3400)
+            AppToast.cancel()
+            delay(600)
+            var ok = 0
+            var where = ""
+            for (k in 0 until n) {
+                val f = grab()
+                if (f != null) ProfileBackup.saveDatasetImage(this@CaptureService, f)?.let { ok++; where = it }
+                if (k < n - 1) delay(every)
+            }
+            AppState.log("📸 Đã lưu $ok/$n ảnh dữ liệu AI: $where")
+            main.post {
+                AppToast.show(this@CaptureService, if (ok > 0) "Đã lưu $ok ảnh vào: $where" else "Không chụp được ảnh", Toast.LENGTH_LONG)
+                showBubble()
+            }
+        }
+    }
 
     /** Người dùng chủ động chụp lại ảnh gốc của các vùng đã khoanh: chờ 4 giây để chuyển sang màn hình gốc rồi chụp. */
     private fun recaptureOriginals(id: String) {
@@ -413,7 +439,35 @@ class CaptureService : Service() {
         }
     }
 
+    /** Luật AI: dùng mô hình .tflite tìm vật thể trong từng vùng quét; đủ số lượng thì trả điểm cao nhất, danh sách đầy đủ để ở Macro.matches. */
+    private suspend fun evalAi(rule: Rule, frame: Bitmap): Hit? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
+        val labels = rule.aiLabel.split('|').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        val pts = ArrayList<IntArray>()
+        var best = -1f; var bx = 0; var by = 0
+        for (rg in regs) {
+            val l = rg.l.coerceIn(0, frame.width - 1)
+            val t = rg.t.coerceIn(0, frame.height - 1)
+            val w = rg.r.coerceAtMost(frame.width) - l
+            val h = rg.b.coerceAtMost(frame.height) - t
+            if (w < 8 || h < 8) continue
+            val crop = Bitmap.createBitmap(frame, l, t, w, h)
+            for (d in AiDetector.detect(this@CaptureService, crop)) {
+                if (d.score < rule.threshold) continue
+                if (labels.isNotEmpty() && d.label.lowercase() !in labels) continue
+                val cx = l + d.box.centerX(); val cy = t + d.box.centerY()
+                pts.add(intArrayOf(cx, cy, (d.score * 1000).toInt()))
+                if (d.score > best) { best = d.score; bx = cx; by = cy }
+            }
+        }
+        if (pts.isEmpty() || pts.size < rule.aiMinCount.coerceAtLeast(1)) return@withContext null
+        Macro.matches = pts
+        Hit(bx, by, best.toDouble(), 1.0)
+    }
+
     private suspend fun evaluate(rule: Rule, frame: Bitmap, test: Boolean = false): Hit? {
+        Macro.matches = emptyList()
+        if (rule.type == Rule.AI) return evalAi(rule, frame)
         if (rule.type == Rule.CHANGE) return ChangeMatcher.detect(this, rule, frame, test)
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val tpl: Bitmap? = if (rule.type == Rule.IMAGE) {

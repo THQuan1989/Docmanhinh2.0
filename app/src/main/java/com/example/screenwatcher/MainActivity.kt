@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var profileDropdown: Button
     private var selectedProfileId: String? = null
     private lateinit var backupBox: LinearLayout
+    private lateinit var aiBox: LinearLayout
     private var dropdownOpen = false
     private lateinit var monitorSwitch: Switch
     private lateinit var bubbleSwitch: Switch
@@ -70,6 +71,17 @@ class MainActivity : ComponentActivity() {
         }
     }
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    /** Chọn file mô hình AI (.tflite) để nạp vào app. */
+    private val modelPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) Thread {
+            val err = AiDetector.importModel(this, uri)
+            runOnUiThread {
+                rebuildAiBox()
+                Toast.makeText(this, err ?: "Đã nạp mô hình AI", Toast.LENGTH_LONG).show()
+            }
+        }.start()
+    }
 
     /** Chọn thư mục riêng để sao lưu bộ luật (còn nguyên khi cài lại app). */
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -197,6 +209,8 @@ class MainActivity : ComponentActivity() {
         root.addView(profileList)
         backupBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(backupBox)
+        aiBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(aiBox)
 
         root.addView(TextView(this).apply {
             text = "Danh sách luật"; textSize = 18f; setTextColor(Color.BLACK); setPadding(0, dp(16), 0, dp(4))
@@ -240,6 +254,7 @@ class MainActivity : ComponentActivity() {
         rebuildList()
         rebuildProfiles()
         rebuildBackupRow()
+        rebuildAiBox()
         h.post(ticker)
     }
 
@@ -409,6 +424,35 @@ class MainActivity : ComponentActivity() {
                 textSize = 12f; setTextColor(Color.DKGRAY)
             })
         }
+    }
+
+    /* ---------------- AI nhận diện vật thể ---------------- */
+
+    private fun rebuildAiBox() {
+        aiBox.removeAllViews()
+        aiBox.addView(TextView(this).apply {
+            text = AiDetector.modelInfo(this@MainActivity); textSize = 14f; setTextColor(Color.BLACK); setPadding(0, dp(12), 0, dp(2))
+        })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(smallBtn("📥 Nạp mô hình") { modelPicker.launch(arrayOf("*/*")) })
+        row.addView(smallBtn("📸 Chụp 1 ảnh") { snapDataset(1) })
+        row.addView(smallBtn("📸 Chụp 20 ảnh") { snapDataset(20) })
+        aiBox.addView(HorizontalScrollView(this).apply { addView(row) })
+        aiBox.addView(TextView(this).apply {
+            text = "Chụp ảnh màn hình làm dữ liệu huấn luyện (chờ 4 giây để chuyển màn hình, 20 ảnh cách nhau 2 giây). " +
+                "Ảnh lưu vào thư mục sao lưu/dataset (nếu đã chọn), không thì vào thư mục riêng của app. " +
+                "Huấn luyện trên máy tính (MediaPipe Model Maker), rồi nạp file .tflite ở đây."
+            textSize = 12f; setTextColor(Color.DKGRAY)
+        })
+    }
+
+    private fun snapDataset(n: Int) {
+        if (!AppState.projectionReady) {
+            Toast.makeText(this, "Cần cấp quyền chụp màn hình trước (mục Chụp màn hình ✘ ở trên)", Toast.LENGTH_LONG).show(); return
+        }
+        startService(
+            Intent(this, CaptureService::class.java).setAction(CaptureService.A_SNAP).putExtra("n", n).putExtra("every", 2000L),
+        )
     }
 
     /** Ghi tất cả bộ luật ra thư mục, rồi nạp thêm những bộ còn thiếu từ thư mục (luồng nền). */

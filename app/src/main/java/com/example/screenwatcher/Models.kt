@@ -45,13 +45,17 @@ data class Rule(
     var tplRegion: Region? = null,
     /** Sau khi luật khớp: chờ bấy nhiêu ms rồi mới chạy macro (0 = chạy ngay). */
     var delayBeforeMs: Long = 0L,
+    /** Kiểu AI: tên loại vật thể cần tìm (nhãn trong mô hình; nhiều nhãn cách nhau bằng |; trống = mọi loại). */
+    var aiLabel: String = "",
+    /** Kiểu AI: chỉ coi là khớp khi thấy ít nhất bấy nhiêu vật thể. */
+    var aiMinCount: Int = 1,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
         .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
-        .put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
+        .put("aiLabel", aiLabel).put("aiMinCount", aiMinCount).put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
         .also { o -> tplRegion?.let { o.put("tplRegion", it.toJson()) } }
 
@@ -60,6 +64,8 @@ data class Rule(
         const val IMAGE = "IMAGE"
         /** Phát hiện sự thay đổi của một vùng so với lúc ban đầu. */
         const val CHANGE = "CHANGE"
+        /** Nhận diện vật thể bằng mô hình AI offline (MediaPipe Object Detector). */
+        const val AI = "AI"
         const val CH_IMAGE = "IMAGE"
         const val CH_TEXT = "TEXT"
 
@@ -84,6 +90,8 @@ data class Rule(
                 diffThreshold = o.optDouble("diffThreshold", 0.10),
                 thenProfile = o.optString("thenProfile", ""),
                 delayBeforeMs = o.optLong("delayBeforeMs", 0L),
+                aiLabel = o.optString("aiLabel", ""),
+                aiMinCount = o.optInt("aiMinCount", 1),
                 tplRegion = o.optJSONArray("tplRegion")?.let { runCatching { Region.from(it) }.getOrNull() },
             )
         }
