@@ -71,7 +71,7 @@ object AiDetector {
         val opts = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(BaseOptions.builder().setModelAssetBuffer(buf).build())
             .setRunningMode(RunningMode.IMAGE)
-            .setScoreThreshold(0.2f) // lấy thấp rồi lọc theo ngưỡng của từng luật
+            .setScoreThreshold(0.05f) // lấy thật thấp rồi lọc theo ngưỡng của từng luật (và để báo cho người dùng biết AI thấy gì)
             .setMaxResults(100)
             .build()
         val d = ObjectDetector.createFromOptions(c.applicationContext, opts)

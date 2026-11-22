@@ -171,6 +171,9 @@ object Macro {
     /** Các vật thể luật AI vừa tìm thấy: [x, y, điểm*1000]. Đặt ngay trước khi chạy macro của luật đó. */
     @Volatile var matches: List<IntArray> = emptyList()
 
+    /** Luật AI: những gì AI vừa thấy (kể cả điểm thấp / sai loại), dùng để báo khi "không khớp". */
+    @Volatile var aiDebug: String = ""
+
     private suspend fun repeatAction(times: Int, gap: Long, f: suspend (Int) -> Unit) {
         for (i in 0 until times) {
             if (!AppState.monitoring) return

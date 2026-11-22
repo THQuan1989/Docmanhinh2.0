@@ -293,7 +293,7 @@ class LabelActivity : Activity() {
 
     /**
      * Ghi bộ dữ liệu COCO dạng zip đúng cấu trúc MediaPipe Model Maker đọc:
-     *   thư mục train gồm data (các ảnh .jpg) và labels.json; thư mục validation cũng vậy
+     *   thư mục train gồm images (các ảnh .jpg) và labels.json; thư mục validation cũng vậy
      * Chỉ dùng các loại có khung; id loại bắt đầu từ 1, id 0 là "background".
      */
     private fun writeCoco(out: OutputStream, labeled: List<Img>, names: List<String>): String {
@@ -311,7 +311,7 @@ class LabelActivity : Activity() {
                 val anns = JSONArray()
                 var annId = 1
                 for ((n, im) in list.withIndex()) {
-                    z.putNextEntry(ZipEntry("$split/data/${im.file}"))
+                    z.putNextEntry(ZipEntry("$split/images/${im.file}"))
                     z.write(File(imgDir(), im.file).readBytes())
                     z.closeEntry()
                     images.put(JSONObject().put("id", n + 1).put("file_name", im.file).put("width", im.w).put("height", im.h))

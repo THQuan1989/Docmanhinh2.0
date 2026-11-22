@@ -397,7 +397,11 @@ class CaptureService : Service() {
         else if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
         else "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
 
-    private fun missText(rule: Rule) = if (rule.type == Rule.CHANGE) "không thấy thay đổi" else "không khớp"
+    private fun missText(rule: Rule) = when (rule.type) {
+        Rule.CHANGE -> "không thấy thay đổi"
+        Rule.AI -> "không khớp — ${Macro.aiDebug}"
+        else -> "không khớp"
+    }
 
     /** Chụp [n] ảnh màn hình (cách nhau [every] ms) lưu làm dữ liệu huấn luyện AI: vào thư mục sao lưu/dataset nếu đã chọn, không thì vào thư mục riêng của app. */
     private fun snap(n: Int, every: Long) {
@@ -444,7 +448,9 @@ class CaptureService : Service() {
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val labels = rule.aiLabel.split('|').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         val pts = ArrayList<IntArray>()
+        val seen = ArrayList<AiDetector.Det>() // mọi thứ AI thấy, kể cả điểm thấp / sai loại
         var best = -1f; var bx = 0; var by = 0
+        try {
         for (rg in regs) {
             val l = rg.l.coerceIn(0, frame.width - 1)
             val t = rg.t.coerceIn(0, frame.height - 1)
@@ -453,6 +459,7 @@ class CaptureService : Service() {
             if (w < 8 || h < 8) continue
             val crop = Bitmap.createBitmap(frame, l, t, w, h)
             for (d in AiDetector.detect(this@CaptureService, crop)) {
+                seen.add(d)
                 if (d.score < rule.threshold) continue
                 if (labels.isNotEmpty() && d.label.lowercase() !in labels) continue
                 val cx = l + d.box.centerX(); val cy = t + d.box.centerY()
@@ -460,6 +467,13 @@ class CaptureService : Service() {
                 if (d.score > best) { best = d.score; bx = cx; by = cy }
             }
         }
+        } catch (e: Throwable) {
+            Macro.aiDebug = e.message ?: "lỗi AI"
+            return@withContext null
+        }
+        Macro.aiDebug = if (seen.isEmpty()) "AI không thấy vật thể nào (kể cả điểm thấp)"
+        else "AI thấy: " + seen.sortedByDescending { it.score }.take(4).joinToString("; ") { "${it.label} ${"%.2f".format(it.score)}" } +
+            " — cần loại '${rule.aiLabel.ifBlank { "bất kỳ" }}', điểm ≥ ${"%.2f".format(rule.threshold)}, ≥ ${rule.aiMinCount} vật thể"
         if (pts.isEmpty() || pts.size < rule.aiMinCount.coerceAtLeast(1)) return@withContext null
         Macro.matches = pts
         Hit(bx, by, best.toDouble(), 1.0)

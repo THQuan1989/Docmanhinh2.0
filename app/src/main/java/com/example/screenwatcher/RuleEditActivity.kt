@@ -319,7 +319,8 @@ class RuleEditActivity : Activity() {
         changeGroup.visibility = if (pos == 2) View.VISIBLE else View.GONE
         thrGroup.visibility = if (pos == 2) View.GONE else View.VISIBLE
         aiGroup.visibility = if (pos == 3) View.VISIBLE else View.GONE
-        thrLabel.text = if (pos == 3) "Ngưỡng điểm AI (0.50 – 0.99): vật thể có điểm từ mức này trở lên mới tính" else "Ngưỡng giống nhau (0.50 – 0.99)"
+        thrLabel.text = if (pos == 3) "Ngưỡng điểm AI (0.10 – 0.99): vật thể có điểm từ mức này trở lên mới tính. Ít dữ liệu huấn luyện thì điểm thường thấp, thử 0.3 – 0.5" else "Ngưỡng giống nhau (0.50 – 0.99)"
+        if (pos == 3 && thr.text.toString().trim() == "0.85") thr.setText("0.4") // 0.85 là mặc định của kiểu chữ/ảnh, quá cao cho AI
         if (pos == 3) aiInfo.text = AiDetector.modelInfo(this)
     }
 
@@ -342,7 +343,8 @@ class RuleEditActivity : Activity() {
         rule.diffThreshold = (diffThr.text.toString().toDoubleOrNull() ?: 0.10).coerceIn(0.01, 1.0)
         rule.text = text.text.toString()
         rule.fuzzy = fuzzy.isChecked
-        rule.threshold = (thr.text.toString().toDoubleOrNull() ?: 0.85).coerceIn(0.5, 0.99)
+        rule.threshold = if (type.selectedItemPosition == 3) (thr.text.toString().toDoubleOrNull() ?: 0.4).coerceIn(0.1, 0.99)
+        else (thr.text.toString().toDoubleOrNull() ?: 0.85).coerceIn(0.5, 0.99)
         rule.macro = macro.text.toString()
         rule.cooldownMs = cool.text.toString().toLongOrNull() ?: 3000L
         rule.repeatCount = (repeatEt.text.toString().toIntOrNull() ?: 1).coerceIn(0, 100_000)
