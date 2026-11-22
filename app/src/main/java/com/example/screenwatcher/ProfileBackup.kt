@@ -158,6 +158,8 @@ object ProfileBackup {
             val bos = ByteArrayOutputStream()
             bmp.compress(Bitmap.CompressFormat.JPEG, 95, bos)
             val bytes = bos.toByteArray()
+            val local = File(c.filesDir, "dataset").apply { mkdirs() } // màn hình Gán nhãn đọc ảnh ở đây
+            File(local, name).writeBytes(bytes)
             val tree = treeUri(c)
             if (tree != null && hasAccess(c)) {
                 val rootDoc = docUri(tree, DocumentsContract.getTreeDocumentId(tree))
@@ -166,12 +168,9 @@ object ProfileBackup {
                     ?: return null
                 val f = DocumentsContract.createDocument(c.contentResolver, dir, "image/jpeg", name) ?: return null
                 c.contentResolver.openOutputStream(f, "w")?.use { it.write(bytes) } ?: return null
-                return "${label(c)}/dataset"
+                return "app (mục Gán nhãn) và ${label(c)}/dataset"
             }
-            val d = c.getExternalFilesDir("dataset") ?: return null
-            d.mkdirs()
-            File(d, name).writeBytes(bytes)
-            return d.absolutePath
+            return "app (mục 🏷 Gán nhãn ảnh)"
         } catch (e: Exception) {
             AppState.log("Lưu ảnh dữ liệu lỗi: ${e.message}")
             return null

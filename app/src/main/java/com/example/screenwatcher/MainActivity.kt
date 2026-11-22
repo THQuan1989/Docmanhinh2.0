@@ -437,11 +437,12 @@ class MainActivity : ComponentActivity() {
         row.addView(smallBtn("📥 Nạp mô hình") { modelPicker.launch(arrayOf("*/*")) })
         row.addView(smallBtn("📸 Chụp 1 ảnh") { snapDataset(1) })
         row.addView(smallBtn("📸 Chụp 20 ảnh") { snapDataset(20) })
+        row.addView(smallBtn("🏷 Gán nhãn ảnh") { startActivity(Intent(this, LabelActivity::class.java)) })
         aiBox.addView(HorizontalScrollView(this).apply { addView(row) })
         aiBox.addView(TextView(this).apply {
             text = "Chụp ảnh màn hình làm dữ liệu huấn luyện (chờ 4 giây để chuyển màn hình, 20 ảnh cách nhau 2 giây). " +
-                "Ảnh lưu vào thư mục sao lưu/dataset (nếu đã chọn), không thì vào thư mục riêng của app. " +
-                "Huấn luyện trên máy tính (MediaPipe Model Maker), rồi nạp file .tflite ở đây."
+                "Ảnh chụp được lưu trong app; bấm 🏷 Gán nhãn ảnh để khoanh vật thể, đặt tên loại rồi xuất file zip COCO. " +
+                "Đưa zip lên Colab (notebook Train_ScreenWatcher_AI.ipynb) để huấn luyện, rồi nạp file .tflite ở đây."
             textSize = 12f; setTextColor(Color.DKGRAY)
         })
     }
