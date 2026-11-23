@@ -45,13 +45,19 @@ data class Rule(
     var tplRegion: Region? = null,
     /** Sau khi luật khớp: chờ bấy nhiêu ms rồi mới chạy macro (0 = chạy ngay). */
     var delayBeforeMs: Long = 0L,
+    /** Tối đa bao nhiêu JOB mỗi lần chạy. */
+    var invMaxJobs: Int = 30,
+    /** Nghỉ sau mỗi JOB để màn hình cập nhật rồi quét lại (ms). */
+    var invSettleMs: Long = 700L,
+    /** Chạy thử: chỉ ghi hàng đợi vào nhật ký, KHÔNG chạm. */
+    var invDry: Boolean = true,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
         .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
-        .put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
+        .put("invMaxJobs", invMaxJobs).put("invSettleMs", invSettleMs).put("invDry", invDry).put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
         .also { o -> tplRegion?.let { o.put("tplRegion", it.toJson()) } }
 
@@ -60,6 +66,8 @@ data class Rule(
         const val IMAGE = "IMAGE"
         /** Phát hiện sự thay đổi của một vùng so với lúc ban đầu. */
         const val CHANGE = "CHANGE"
+        /** Nhận diện lưới hành trang bằng bộ so khớp ảnh mẫu tích hợp. */
+        const val INVENTORY = "INVENTORY"
         const val CH_IMAGE = "IMAGE"
         const val CH_TEXT = "TEXT"
 
@@ -70,20 +78,23 @@ data class Rule(
             return Rule(
                 id = o.getString("id"),
                 name = o.optString("name", "Luật"),
-                type = o.optString("type", TEXT).let { if (it == "AI") TEXT else it },
+                type = when (o.optString("type", TEXT)) { "AI" -> if (o.optBoolean("invOn", false)) INVENTORY else CHANGE; else -> o.optString("type", TEXT) },
                 text = o.optString("text", ""),
                 fuzzy = o.optBoolean("fuzzy", true),
                 threshold = o.optDouble("threshold", 0.85),
                 regions = regs,
                 macro = o.optString("macro", "tap_match"),
                 cooldownMs = o.optLong("cooldownMs", 3000),
-                enabled = o.optBoolean("enabled", true) && o.optString("type", TEXT) != "AI",
+                enabled = o.optBoolean("enabled", true),
                 repeatCount = o.optInt("repeatCount", 1),
                 repeatDelayMs = o.optLong("repeatDelayMs", 500),
                 changeMode = o.optString("changeMode", CH_IMAGE),
                 diffThreshold = o.optDouble("diffThreshold", 0.10),
                 thenProfile = o.optString("thenProfile", ""),
                 delayBeforeMs = o.optLong("delayBeforeMs", 0L),
+                invMaxJobs = o.optInt("invMaxJobs", 30),
+                invSettleMs = o.optLong("invSettleMs", 700L),
+                invDry = o.optBoolean("invDry", true),
                 tplRegion = o.optJSONArray("tplRegion")?.let { runCatching { Region.from(it) }.getOrNull() },
             )
         }
@@ -116,6 +127,7 @@ object RuleStore {
     fun delete(c: Context, id: String) {
         saveAll(c, load(c).filter { it.id != id })
         templateFile(c, id).delete()
+        InventoryVision.clear(c, id)
         ChangeMatcher.delete(c, id)
     }
 

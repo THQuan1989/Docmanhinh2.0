@@ -39,6 +39,11 @@ class RuleEditActivity : Activity() {
     private lateinit var imageGroup: LinearLayout
     private lateinit var changeGroup: LinearLayout
     private lateinit var thrGroup: LinearLayout
+    private lateinit var thrLabel: TextView
+    private lateinit var inventoryGroup: LinearLayout
+    private lateinit var invMaxEt: EditText
+    private lateinit var invSettleEt: EditText
+    private lateinit var invDryCb: CheckBox
     private lateinit var changeMode: Spinner
     private lateinit var diffThr: EditText
     private lateinit var baseTv: TextView
@@ -73,9 +78,9 @@ class RuleEditActivity : Activity() {
         type = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@RuleEditActivity, android.R.layout.simple_spinner_dropdown_item,
-                listOf("Chữ (OCR)", "Hình ảnh (mẫu)", "Phát hiện thay đổi (so với ban đầu)"),
+                listOf("Chữ (OCR)", "Hình ảnh (mẫu)", "Phát hiện thay đổi (so với ban đầu)", "Hành trang (giữ vật phẩm bằng ảnh mẫu)"),
             )
-            setSelection(when (rule.type) { Rule.TEXT -> 0; Rule.IMAGE -> 1; else -> 2 })
+            setSelection(when (rule.type) { Rule.TEXT -> 0; Rule.IMAGE -> 1; Rule.INVENTORY -> 3; else -> 2 })
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = toggleGroups()
                 override fun onNothingSelected(p: AdapterView<*>?) {}
@@ -139,8 +144,54 @@ class RuleEditActivity : Activity() {
         })
         root.addView(changeGroup)
 
+        // --- nhóm nhận diện hành trang ---
+        inventoryGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // --- Inventory Protector ---
+        inventoryGroup.addView(TextView(this).apply {
+            text = "🛡 Bộ nhận diện hành trang riêng: ảnh mẫu đã chọn sẽ được giữ lại; các ô còn lại được xử lý tuần tự."
+            setTextColor(Color.BLACK); setPadding(0, dp(4), 0, dp(4))
+        })
+        inventoryGroup.addView(label("Hãy khoanh vùng lưới hành trang trước. Ảnh mẫu GIỮ được chọn trực tiếp trên màn hình; các ô còn lại trong vùng sẽ vào hàng đợi JOB."))
+        inventoryGroup.addView(btn("👆 Chọn vật GIỮ NGUYÊN trên màn hình (quét sau 4 giây)") {
+            collect(); RuleStore.upsert(this, rule)
+            when {
+                rule.regions.isEmpty() ->
+                    AppToast.show(this, "Hãy khoanh vùng hành trang trước (chỉ bao các ô vật phẩm)", Toast.LENGTH_LONG)
+                !AppState.projectionReady ->
+                    AppToast.show(this, "Hãy cấp quyền chụp màn hình ở màn hình chính trước", Toast.LENGTH_LONG)
+                else -> {
+                    AppToast.show(this, "Chuyển sang màn hình hành trang trong 4 giây…", Toast.LENGTH_LONG)
+                    startService(
+                        Intent(this, CaptureService::class.java).setAction(CaptureService.A_PICK_ITEMS).putExtra("id", rule.id),
+                    )
+                }
+            }
+        })
+        invMaxEt = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.invMaxJobs.toString()) }
+        inventoryGroup.addView(label("Tối đa bao nhiêu JOB mỗi lần chạy"))
+        inventoryGroup.addView(invMaxEt)
+        invSettleEt = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER; setText(rule.invSettleMs.toString()) }
+        inventoryGroup.addView(label("Nghỉ sau mỗi JOB (ms) để màn hình cập nhật rồi quét lại"))
+        inventoryGroup.addView(invSettleEt)
+        invDryCb = CheckBox(this).apply {
+            text = "Chạy thử: chỉ ghi hàng đợi vào nhật ký, KHÔNG chạm (bỏ chọn khi đã kiểm tra kỹ)"
+            isChecked = rule.invDry
+        }
+        inventoryGroup.addView(invDryCb)
+        inventoryGroup.addView(TextView(this).apply {
+            textSize = 11f
+            text = "Macro của luật chạy cho TỪNG ô trong hàng đợi, tap_match chạm đúng tâm ô đó. Ví dụ: tap_match, wait 400, " +
+                "tap <nút Bán>, wait 400, tap <nút Xác nhận>. Hãy kiểm tra nhật ký ở chế độ chạy thử trước khi bật thao tác thật."
+        })
+        inventoryGroup.addView(TextView(this).apply {
+            textSize = 11f
+            text = "Bộ nhận diện hành trang dùng so khớp ảnh mẫu tích hợp, chạy hoàn toàn offline. Vùng quét nên bao sát lưới hành trang; kích thước ô mặc định 64dp. Hãy chạy thử trước khi bỏ chế độ chạy thử."
+        })
+        root.addView(inventoryGroup)
+
         thrGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        thrGroup.addView(label("Ngưỡng giống nhau (0.50 – 0.99)"))
+        thrLabel = label("Ngưỡng giống nhau (0.50 – 0.99)")
+        thrGroup.addView(thrLabel)
         thr = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             setText(rule.threshold.toString())
@@ -273,6 +324,7 @@ class RuleEditActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (::baseTv.isInitialized) refreshBase()
+        // chọn vật giữ nguyên trên màn hình ghi kết quả vào luật đã lưu: nạp lại vào ô nhập
     }
 
     private fun refreshBase() {
@@ -290,7 +342,9 @@ class RuleEditActivity : Activity() {
         textGroup.visibility = if (pos == 0) View.VISIBLE else View.GONE
         imageGroup.visibility = if (pos == 1) View.VISIBLE else View.GONE
         changeGroup.visibility = if (pos == 2) View.VISIBLE else View.GONE
-        thrGroup.visibility = if (pos == 2) View.GONE else View.VISIBLE
+        thrGroup.visibility = if (pos == 2 || pos == 3) View.GONE else View.VISIBLE
+        inventoryGroup.visibility = if (pos == 3) View.VISIBLE else View.GONE
+        thrLabel.text = "Ngưỡng giống nhau (0.50 – 0.99)"
     }
 
     private fun refreshRegions() {
@@ -305,7 +359,10 @@ class RuleEditActivity : Activity() {
 
     private fun collect() {
         rule.name = name.text.toString().ifBlank { "Luật" }
-        rule.type = when (type.selectedItemPosition) { 0 -> Rule.TEXT; 1 -> Rule.IMAGE; else -> Rule.CHANGE }
+        rule.type = when (type.selectedItemPosition) { 0 -> Rule.TEXT; 1 -> Rule.IMAGE; 3 -> Rule.INVENTORY; else -> Rule.CHANGE }
+        rule.invMaxJobs = (invMaxEt.text.toString().toIntOrNull() ?: 30).coerceIn(1, 500)
+        rule.invSettleMs = (invSettleEt.text.toString().toLongOrNull() ?: 700L).coerceIn(100L, 10_000L)
+        rule.invDry = invDryCb.isChecked
         rule.changeMode = if (changeMode.selectedItemPosition == 1) Rule.CH_TEXT else Rule.CH_IMAGE
         rule.diffThreshold = (diffThr.text.toString().toDoubleOrNull() ?: 0.10).coerceIn(0.01, 1.0)
         rule.text = text.text.toString()

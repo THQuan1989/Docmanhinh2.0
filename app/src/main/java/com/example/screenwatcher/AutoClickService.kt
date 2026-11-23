@@ -167,6 +167,9 @@ private class FlashView(
  *   vd: swipe 540 1600 540 600 300 times=5 gap=400
  */
 object Macro {
+    /** Trạng thái quét hành trang gần nhất để hiển thị trong nhật ký. */
+    @Volatile var inventoryStatus: String = ""
+
     private suspend fun repeatAction(times: Int, gap: Long, f: suspend (Int) -> Unit) {
         for (i in 0 until times) {
             if (!AppState.monitoring) return

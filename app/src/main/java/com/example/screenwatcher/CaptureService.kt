@@ -50,6 +50,7 @@ class CaptureService : Service() {
         const val A_BUBBLE = "sw.bubble"
         const val A_PROFILE = "sw.profile"
         const val A_BASELINE = "sw.baseline"
+        const val A_PICK_ITEMS = "sw.pickitems"
         private const val CH = "sw_capture"
     }
 
@@ -71,6 +72,7 @@ class CaptureService : Service() {
     private var loop: Job? = null
     private val lastFire = HashMap<String, Long>()
     private var editor: ActionEditorOverlay? = null
+    private var picker: InventorySamplePicker? = null
     private var seqIndex = 0
     private var seqCycle = 0
     @Volatile private var seqResumeAt = 0L // đang nghỉ giữa hai vòng đến thời điểm này
@@ -90,6 +92,7 @@ class CaptureService : Service() {
                 i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
             )
             A_BASELINE -> recaptureOriginals(i.getStringExtra("id") ?: "")
+            A_PICK_ITEMS -> pickItems(i.getStringExtra("id") ?: "")
             A_TEST -> test(i.getStringExtra("id") ?: "")
             A_PROFILE -> loadProfile(i.getStringExtra("id") ?: "", i.getBooleanExtra("run", true))
         }
@@ -123,7 +126,7 @@ class CaptureService : Service() {
             fab?.refresh()
             return
         }
-        lastFire.clear()
+        lastFire.clear(); invTries.clear()
         ChangeMatcher.resetLatches()
         AppState.log("📂 Đã nạp bộ luật '$name'")
         if (AppState.monitoring) setMonitoring(false) // dừng vòng cũ để chạy lại từ đầu
@@ -309,7 +312,7 @@ class CaptureService : Service() {
             val hit = safeEval(rule, frame) ?: continue
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             AppState.log("✔ '${rule.name}' ${hitText(rule, hit)}")
-            Macro.runRule(rule, hit.x, hit.y)
+            fire(rule, hit)
             lastFire[rule.id] = SystemClock.elapsedRealtime()
             chain(rule) // có đặt "chạy cả bộ luật" thì chuyển bộ luật
             break // chụp lại khung mới rồi mới xét tiếp
@@ -355,7 +358,7 @@ class CaptureService : Service() {
         }
         val hit = safeEval(rule, frame) ?: return
         AppState.log("✔ [${seqIndex + 1}/${rules.size}] '${rule.name}' ${hitText(rule, hit)}")
-        Macro.runRule(rule, hit.x, hit.y)
+        fire(rule, hit)
         if (!AppState.monitoring) return
         if (chain(rule)) return
         seqIndex++
@@ -391,11 +394,51 @@ class CaptureService : Service() {
     }
 
     private fun hitText(rule: Rule, hit: Hit): String =
-        if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
+        if (rule.type == Rule.INVENTORY) "HÀNH TRANG — ${Macro.inventoryStatus}"
+        else if (rule.type == Rule.CHANGE) "CÓ THAY ĐỔI ${"%.0f".format(hit.score * 100)}% tại ${hit.x},${hit.y}"
         else "KHỚP (${"%.2f".format(hit.score)}, tỉ lệ ${"%.2f".format(hit.scale)}x) tại ${hit.x},${hit.y}"
 
+    private fun missText(rule: Rule) = when (rule.type) {
+        Rule.CHANGE -> "không thấy thay đổi"
+        Rule.INVENTORY -> "Inventory: không còn vật cần xử lý — ${Macro.inventoryStatus}"
+        else -> "không khớp"
+    }
 
-    private fun missText(rule: Rule) = if (rule.type == Rule.CHANGE) "không thấy thay đổi" else "không khớp"
+    /** Chọn ảnh mẫu GIỮ bằng bộ nhận diện hình ảnh riêng: người dùng chạm trực tiếp vào ô hành trang. */
+    private fun pickItems(id: String) {
+        val rule = RuleStore.get(this, id) ?: return
+        fab?.hide()
+        scope.launch {
+            delay(3400)
+            AppToast.cancel()
+            delay(600)
+            val frame = grab()
+            main.post {
+                if (frame == null) {
+                    AppToast.show(this@CaptureService, "Chưa lấy được khung hình màn hình", Toast.LENGTH_LONG)
+                    showBubble()
+                    return@post
+                }
+                val cell = InventoryVision.cellSizePx(this@CaptureService, id)
+                if (rule.regions.none { it.w >= 48 && it.h >= 48 }) {
+                    AppToast.show(this@CaptureService, "Vùng hành trang quá nhỏ. Hãy khoanh vùng bao lưới ô vật phẩm.", Toast.LENGTH_LONG)
+                    showBubble()
+                    return@post
+                }
+                picker = InventorySamplePicker(
+                    this@CaptureService, frame, id, rule.regions.toList(),
+                    onDone = { added ->
+                        picker = null
+                        val count = InventoryVision.count(this@CaptureService, id)
+                        AppState.log("🛡 '${rule.name}': đã thêm $added ảnh mẫu; tổng cộng $count mẫu giữ")
+                        AppToast.show(this@CaptureService, "Đã lưu $added ảnh mẫu. Tổng mẫu giữ: $count", Toast.LENGTH_LONG)
+                        showBubble()
+                    },
+                    onCancel = { picker = null; showBubble() },
+                ).also { it.show() }
+            }
+        }
+    }
 
     /** Người dùng chủ động chụp lại ảnh gốc của các vùng đã khoanh: chờ 4 giây để chuyển sang màn hình gốc rồi chụp. */
     private fun recaptureOriginals(id: String) {
@@ -414,7 +457,87 @@ class CaptureService : Service() {
         }
     }
 
+    /** Các vật đã thử xử lý nhưng vẫn còn (vd: bấm không ăn): bỏ qua sau 2 lần để không lặp mãi. Key = loại + ô lưới 40px. */
+    private val invTries = HashMap<String, Int>()
+    private fun invKey(i: InventoryVision.Item) = "${i.label}@${i.x / 40},${i.y / 40}"
+
+    /** Tách danh sách vật thành (giữ nguyên, hàng đợi JOB). Hàng đợi xếp theo hàng rồi trái sang phải. */
+    private fun invSplit(rule: Rule, items: List<InventoryVision.Item>): Pair<List<InventoryVision.Item>, List<InventoryVision.Item>> {
+        val kept = items.filter { it.label.startsWith("GIU_") }
+        val queue = items.filter { !it.label.startsWith("GIU_") && (invTries[invKey(it)] ?: 0) < 2 }
+            .sortedWith(compareBy({ it.y / 60 }, { it.x }))
+        return kept to queue
+    }
+
+    private fun invSummary(kept: List<InventoryVision.Item>, queue: List<InventoryVision.Item>): String =
+        "giữ nguyên ${kept.size}" + (if (kept.isNotEmpty()) " (${kept.groupingBy { it.label }.eachCount().entries.joinToString(", ") { "${it.key}×${it.value}" }})" else "") +
+            "; hàng đợi ${queue.size}" + (if (queue.isNotEmpty()) ": " + queue.take(6).joinToString(", ") {
+                "${it.label}(${it.x},${it.y})"
+            } + (if (queue.size > 6) "…" else "") else "")
+
+    /** Đánh giá lưới hành trang bằng bộ so khớp ảnh mẫu nội bộ. */
+    private suspend fun evalInventory(rule: Rule, frame: Bitmap): Hit? {
+        val items = InventoryVision.scan(this@CaptureService, rule.id, frame, rule.regions)
+        Macro.inventoryStatus = "Nhận diện ảnh riêng: ${items.size} ô vật phẩm; ${InventoryVision.count(this@CaptureService, rule.id)} ảnh mẫu giữ"
+        val (kept, queue) = invSplit(rule, items)
+        Macro.inventoryStatus = invSummary(kept, queue)
+        if (queue.isEmpty()) return null
+        return Hit(queue[0].x, queue[0].y, queue[0].score.toDouble(), 1.0)
+    }
+
+    /**
+     * Inventory Protector — chạy hàng đợi JOB tuần tự: quét, lấy vật đầu hàng đợi (không thuộc danh sách giữ nguyên),
+     * chạy macro của luật với toạ độ vật đó, nghỉ cho màn hình cập nhật, quét lại... cho đến khi hết vật hoặc đạt giới hạn.
+     * Vật có điểm dưới ngưỡng không bị đụng tới.
+     */
+    private suspend fun runInventory(rule: Rule) {
+        if (rule.invDry) {
+            AppState.log("🛡 Hành trang (CHẠY THỬ, không chạm): ${Macro.inventoryStatus}")
+            return
+        }
+        if (InventoryVision.count(this@CaptureService, rule.id) == 0) {
+            AppState.log("⚠ Inventory '${rule.name}': chưa có ảnh mẫu GIỮ — không chạy để tránh xử lý nhầm")
+            return
+        }
+        var done = 0
+        val limit = rule.invMaxJobs.coerceIn(1, 500)
+        var lastKey: String? = null
+        var lastSize = -1
+        var stuck = 0 // số lần liên tiếp vật đầu hàng đợi vẫn ở nguyên chỗ cũ mà hàng đợi không ngắn đi
+        while (AppState.monitoring && done < limit) {
+            val f = grab() ?: break
+            val (kept, queue) = invSplit(rule, InventoryVision.scan(this@CaptureService, rule.id, f, rule.regions))
+            if (queue.isEmpty()) break
+            val job = queue[0]
+            val k = invKey(job)
+            // hành trang dồn ô nên vật kế tiếp có thể rơi đúng ô cũ; chỉ coi là "kẹt" khi hàng đợi không ngắn đi sau JOB
+            if (k == lastKey && queue.size >= lastSize) {
+                stuck++
+                if (stuck >= 2) {
+                    invTries[k] = 2
+                    AppState.log("⚠ Bỏ qua ${job.label} tại ${job.x},${job.y}: xử lý 2 lần mà vẫn còn")
+                    lastKey = null; stuck = 0
+                    continue
+                }
+            } else {
+                stuck = 0
+            }
+            lastKey = k; lastSize = queue.size
+            AppState.log("🛡 JOB ${done + 1}: ${job.label} tại ${job.x},${job.y} • còn ${queue.size - 1} trong hàng đợi, giữ nguyên ${kept.size}")
+            Macro.run(rule.macro, job.x, job.y)
+            done++
+            delay(rule.invSettleMs.coerceAtLeast(100))
+        }
+        AppState.log("🛡 Inventory '${rule.name}' xong: đã xử lý $done vật" + if (done >= limit) " (đạt giới hạn $limit JOB)" else "")
+    }
+
+    /** Chạy phần "làm gì khi khớp" của luật: Inventory thì chạy hàng đợi JOB, còn lại chạy macro như thường. */
+    private suspend fun fire(rule: Rule, hit: Hit) {
+        if (rule.type == Rule.INVENTORY) runInventory(rule) else Macro.runRule(rule, hit.x, hit.y)
+    }
+
     private suspend fun evaluate(rule: Rule, frame: Bitmap, test: Boolean = false): Hit? {
+        if (rule.type == Rule.INVENTORY) return evalInventory(rule, frame)
         if (rule.type == Rule.CHANGE) return ChangeMatcher.detect(this, rule, frame, test)
         val regs = if (rule.regions.isEmpty()) listOf(Region(0, 0, frame.width, frame.height)) else rule.regions
         val tpl: Bitmap? = if (rule.type == Rule.IMAGE) {
@@ -681,6 +804,7 @@ class CaptureService : Service() {
         loop?.cancel()
         overlay?.hide(); overlay = null
         editor?.hide(); editor = null
+        picker?.hide(); picker = null
         fab?.hide(); fab = null
         vd?.release(); vd = null
         reader?.close(); reader = null

@@ -58,6 +58,8 @@ object ProfileStore {
             if (src.exists()) src.copyTo(File(d, src.name), overwrite = true)
             val bf = ChangeMatcher.baseFile(c, r.id)
             if (bf.exists()) bf.copyTo(File(d, bf.name), overwrite = true)
+            val inv = InventoryVision.file(c, r.id)
+            if (inv.exists()) inv.copyTo(File(d, inv.name), overwrite = true)
         }
         ProfileBackup.async { ProfileBackup.export(c, id) } // chép thêm ra thư mục sao lưu (nếu đã chọn)
         return Profile(id, clean, now, rules.size)
@@ -87,8 +89,11 @@ object ProfileStore {
         if (!merge) (c.filesDir.listFiles() ?: emptyArray())
             .filter { it.name.startsWith("base_") && it.name.endsWith(".bin") }
             .forEach { it.delete() }
+        if (!merge) (c.filesDir.listFiles() ?: emptyArray())
+            .filter { it.name.startsWith("inv_samples_") && it.name.endsWith(".bin") }
+            .forEach { it.delete() }
         (dir(c, id).listFiles() ?: emptyArray())
-            .filter { it.name.startsWith("base_") && it.name.endsWith(".bin") }
+            .filter { (it.name.startsWith("base_") || it.name.startsWith("inv_samples_")) && it.name.endsWith(".bin") }
             .forEach { it.copyTo(File(c.filesDir, it.name), overwrite = true) }
 
         rules.forEach { it.enabled = true } // nạp bộ luật xong thì mọi luật đều được tích sẵn, chờ chạy
@@ -119,6 +124,8 @@ object ProfileStore {
             if (tpl.exists()) tpl.copyTo(RuleStore.templateFile(c, nid), overwrite = true)
             val base = File(d, "base_${r.id}.bin")
             if (base.exists()) base.copyTo(ChangeMatcher.baseFile(c, nid), overwrite = true)
+            val inv = File(d, "inv_samples_${r.id}.bin")
+            if (inv.exists()) inv.copyTo(InventoryVision.file(c, nid), overwrite = true)
             r.copy(id = nid, name = if (tag.isEmpty()) r.name else r.name + suffix, enabled = true)
         }
         RuleStore.saveAll(c, kept + added)

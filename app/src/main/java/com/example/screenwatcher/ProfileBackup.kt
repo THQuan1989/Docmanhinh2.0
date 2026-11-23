@@ -88,7 +88,9 @@ object ProfileBackup {
         ZipOutputStream(bos).use { z ->
             for (f in dir.listFiles() ?: emptyArray()) {
                 val n = f.name
-                if (n != PROFILE_JSON && !(n.startsWith("tpl_") && n.endsWith(".png")) && !(n.startsWith("base_") && n.endsWith(".bin"))) continue
+                if (n != PROFILE_JSON && !(n.startsWith("tpl_") && n.endsWith(".png")) &&
+                    !(n.startsWith("base_") && n.endsWith(".bin")) &&
+                    !(n.startsWith("inv_samples_") && n.endsWith(".bin"))) continue
                 z.putNextEntry(ZipEntry(n))
                 z.write(f.readBytes())
                 z.closeEntry()
@@ -154,7 +156,9 @@ object ProfileBackup {
                     while (true) {
                         val e = z.nextEntry ?: break
                         val nm = File(e.name).name // chỉ lấy tên file, tránh đường dẫn lạ trong zip
-                        val ok = nm == PROFILE_JSON || (nm.startsWith("tpl_") && nm.endsWith(".png")) || (nm.startsWith("base_") && nm.endsWith(".bin"))
+                        val ok = nm == PROFILE_JSON || (nm.startsWith("tpl_") && nm.endsWith(".png")) ||
+                            (nm.startsWith("base_") && nm.endsWith(".bin")) ||
+                            (nm.startsWith("inv_samples_") && nm.endsWith(".bin"))
                         if (ok) files[nm] = z.readBytes()
                     }
                 }
