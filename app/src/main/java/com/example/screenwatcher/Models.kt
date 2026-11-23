@@ -45,27 +45,13 @@ data class Rule(
     var tplRegion: Region? = null,
     /** Sau khi luật khớp: chờ bấy nhiêu ms rồi mới chạy macro (0 = chạy ngay). */
     var delayBeforeMs: Long = 0L,
-    /** Kiểu AI: tên loại vật thể cần tìm (nhãn trong mô hình; nhiều nhãn cách nhau bằng |; trống = mọi loại). */
-    var aiLabel: String = "",
-    /** Kiểu AI: chỉ coi là khớp khi thấy ít nhất bấy nhiêu vật thể. */
-    var aiMinCount: Int = 1,
-    /** Inventory Protector (luật AI): bật chế độ giữ nguyên vật chỉ định, các vật còn lại vào hàng đợi JOB. */
-    var invOn: Boolean = false,
-    /** Nhãn các vật phẩm GIỮ NGUYÊN (cách nhau bằng |). */
-    var invProtect: String = "",
-    /** Tối đa bao nhiêu JOB mỗi lần chạy. */
-    var invMaxJobs: Int = 30,
-    /** Nghỉ sau mỗi JOB để màn hình cập nhật rồi quét lại (ms). */
-    var invSettleMs: Long = 700L,
-    /** Chạy thử: chỉ ghi hàng đợi vào nhật ký, KHÔNG chạm. */
-    var invDry: Boolean = true,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name).put("type", type).put("text", text)
         .put("fuzzy", fuzzy).put("threshold", threshold).put("macro", macro)
         .put("cooldownMs", cooldownMs).put("enabled", enabled)
         .put("repeatCount", repeatCount).put("repeatDelayMs", repeatDelayMs)
-        .put("aiLabel", aiLabel).put("aiMinCount", aiMinCount).put("invOn", invOn).put("invProtect", invProtect).put("invMaxJobs", invMaxJobs).put("invSettleMs", invSettleMs).put("invDry", invDry).put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
+        .put("delayBeforeMs", delayBeforeMs).put("changeMode", changeMode).put("diffThreshold", diffThreshold).put("thenProfile", thenProfile)
         .put("regions", JSONArray().also { a -> regions.forEach { a.put(it.toJson()) } })
         .also { o -> tplRegion?.let { o.put("tplRegion", it.toJson()) } }
 
@@ -74,8 +60,6 @@ data class Rule(
         const val IMAGE = "IMAGE"
         /** Phát hiện sự thay đổi của một vùng so với lúc ban đầu. */
         const val CHANGE = "CHANGE"
-        /** Nhận diện vật thể bằng mô hình AI offline (MediaPipe Object Detector). */
-        const val AI = "AI"
         const val CH_IMAGE = "IMAGE"
         const val CH_TEXT = "TEXT"
 
@@ -86,27 +70,20 @@ data class Rule(
             return Rule(
                 id = o.getString("id"),
                 name = o.optString("name", "Luật"),
-                type = o.optString("type", TEXT),
+                type = o.optString("type", TEXT).let { if (it == "AI") TEXT else it },
                 text = o.optString("text", ""),
                 fuzzy = o.optBoolean("fuzzy", true),
                 threshold = o.optDouble("threshold", 0.85),
                 regions = regs,
                 macro = o.optString("macro", "tap_match"),
                 cooldownMs = o.optLong("cooldownMs", 3000),
-                enabled = o.optBoolean("enabled", true),
+                enabled = o.optBoolean("enabled", true) && o.optString("type", TEXT) != "AI",
                 repeatCount = o.optInt("repeatCount", 1),
                 repeatDelayMs = o.optLong("repeatDelayMs", 500),
                 changeMode = o.optString("changeMode", CH_IMAGE),
                 diffThreshold = o.optDouble("diffThreshold", 0.10),
                 thenProfile = o.optString("thenProfile", ""),
                 delayBeforeMs = o.optLong("delayBeforeMs", 0L),
-                aiLabel = o.optString("aiLabel", ""),
-                aiMinCount = o.optInt("aiMinCount", 1),
-                invOn = o.optBoolean("invOn", false),
-                invProtect = o.optString("invProtect", ""),
-                invMaxJobs = o.optInt("invMaxJobs", 30),
-                invSettleMs = o.optLong("invSettleMs", 700L),
-                invDry = o.optBoolean("invDry", true),
                 tplRegion = o.optJSONArray("tplRegion")?.let { runCatching { Region.from(it) }.getOrNull() },
             )
         }

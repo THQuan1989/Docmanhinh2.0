@@ -22,7 +22,6 @@
         </activity>
 
         <activity android:name=".RuleEditActivity" android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".LabelActivity" />
 
         <service
             android:name=".CaptureService"

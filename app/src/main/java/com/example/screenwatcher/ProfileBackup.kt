@@ -2,16 +2,12 @@ package com.example.screenwatcher
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.DocumentsContract
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -123,59 +119,7 @@ object ProfileBackup {
         return true
     }
 
-    fun exportAll(c: Context): Int = ProfileStore.list(c).count { export(c, it.id) }.also { exportModel(c) }
-
-    private const val MODEL_FILE = "ai_model.tflite"
-
-    /** Chép mô hình AI (.tflite) ra thư mục sao lưu để cài lại app vẫn còn. */
-    fun exportModel(c: Context): Boolean {
-        try {
-            val tree = treeUri(c) ?: return false
-            if (!hasAccess(c) || !AiDetector.hasModel(c)) return false
-            children(c, tree).filter { it.name == MODEL_FILE }.forEach {
-                runCatching { DocumentsContract.deleteDocument(c.contentResolver, docUri(tree, it.id)) }
-            }
-            val created = DocumentsContract.createDocument(
-                c.contentResolver, docUri(tree, DocumentsContract.getTreeDocumentId(tree)), "application/octet-stream", MODEL_FILE,
-            ) ?: return false
-            c.contentResolver.openOutputStream(created, "w")?.use { o ->
-                AiDetector.modelFile(c).inputStream().use { it.copyTo(o) }
-            } ?: return false
-            return true
-        } catch (e: Exception) {
-            AppState.log("Sao lưu mô hình AI lỗi: ${e.message}")
-            return false
-        }
-    }
-
-    /**
-     * Lưu một ảnh chụp màn hình làm dữ liệu huấn luyện AI: vào thư mục sao lưu/dataset nếu đã chọn thư mục,
-     * không thì vào thư mục riêng của app. Trả mô tả nơi lưu, hoặc null nếu lỗi.
-     */
-    fun saveDatasetImage(c: Context, bmp: Bitmap): String? {
-        try {
-            val name = "sw_" + SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) + ".jpg"
-            val bos = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, 95, bos)
-            val bytes = bos.toByteArray()
-            val local = File(c.filesDir, "dataset").apply { mkdirs() } // màn hình Gán nhãn đọc ảnh ở đây
-            File(local, name).writeBytes(bytes)
-            val tree = treeUri(c)
-            if (tree != null && hasAccess(c)) {
-                val rootDoc = docUri(tree, DocumentsContract.getTreeDocumentId(tree))
-                val dir = children(c, tree).firstOrNull { it.name == "dataset" }?.let { docUri(tree, it.id) }
-                    ?: DocumentsContract.createDocument(c.contentResolver, rootDoc, DocumentsContract.Document.MIME_TYPE_DIR, "dataset")
-                    ?: return null
-                val f = DocumentsContract.createDocument(c.contentResolver, dir, "image/jpeg", name) ?: return null
-                c.contentResolver.openOutputStream(f, "w")?.use { it.write(bytes) } ?: return null
-                return "app (mục Gán nhãn) và ${label(c)}/dataset"
-            }
-            return "app (mục 🏷 Gán nhãn ảnh)"
-        } catch (e: Exception) {
-            AppState.log("Lưu ảnh dữ liệu lỗi: ${e.message}")
-            return null
-        }
-    }
+    fun exportAll(c: Context): Int = ProfileStore.list(c).count { export(c, it.id) }
 
     /** Xoá file sao lưu của bộ luật tên [name] (khi xoá / đổi tên bộ luật). */
     fun deleteByName(c: Context, name: String) {
@@ -223,16 +167,6 @@ object ProfileBackup {
                 d.deleteRecursively(); d.mkdirs()
                 for ((fn, data) in files) File(d, fn).writeBytes(data)
                 n++
-            }
-        }
-        // khôi phục mô hình AI nếu app chưa có
-        if (!AiDetector.hasModel(c)) {
-            kids.firstOrNull { it.name == MODEL_FILE }?.let { ch ->
-                runCatching {
-                    c.contentResolver.openInputStream(docUri(tree, ch.id))?.use { ins ->
-                        AiDetector.modelFile(c).outputStream().use { o -> ins.copyTo(o) }
-                    }
-                }
             }
         }
         return n

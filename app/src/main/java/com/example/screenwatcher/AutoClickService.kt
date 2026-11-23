@@ -155,7 +155,6 @@ private class FlashView(
 /**
  * Macro: mỗi dòng một lệnh
  *   tap_match [dx dy] [ms=..]     chạm vào vị trí vừa tìm thấy (có thể lệch dx, dy; ms=.. để giữ)
- *   tap_all [dx dy] [ms=..] [gap=..]  luật AI: chạm lần lượt MỌI vật thể vừa tìm thấy (từ trên xuống, trái sang phải)
  *   tap x y [ms]                  chạm toạ độ (mặc định 60 ms)
  *   longtap x y [ms]              chạm và giữ (mặc định 800 ms)
  *   swipe x1 y1 x2 y2 [ms] [path=x,y;x,y;...]  vuốt (mặc định 300 ms); path= là đường đi đã ghi (nếu có thì vuốt theo đường đó)
@@ -168,12 +167,6 @@ private class FlashView(
  *   vd: swipe 540 1600 540 600 300 times=5 gap=400
  */
 object Macro {
-    /** Các vật thể luật AI vừa tìm thấy: [x, y, điểm*1000]. Đặt ngay trước khi chạy macro của luật đó. */
-    @Volatile var matches: List<IntArray> = emptyList()
-
-    /** Luật AI: những gì AI vừa thấy (kể cả điểm thấp / sai loại), dùng để báo khi "không khớp". */
-    @Volatile var aiDebug: String = ""
-
     private suspend fun repeatAction(times: Int, gap: Long, f: suspend (Int) -> Unit) {
         for (i in 0 until times) {
             if (!AppState.monitoring) return
@@ -236,19 +229,6 @@ object Macro {
                     val d = ms ?: 60L
                     svc.flash(if (d >= 500L) "longtap" else "tap", x, y, x, y, d, lab(times, i), sizeDp)
                     svc.tap(x, y, d)
-                }
-                "tap_all" -> {
-                    val pts = matches.sortedWith(compareBy({ it[1] / 40 }, { it[0] })) // theo hàng, trái sang phải
-                    val list = if (pts.isEmpty()) listOf(intArrayOf(mx, my, 0)) else pts
-                    for ((i, q) in list.withIndex()) {
-                        if (!AppState.monitoring) return
-                        val x = q[0] + (a.getOrNull(0) ?: 0f)
-                        val y = q[1] + (a.getOrNull(1) ?: 0f)
-                        val d = ms ?: 60L
-                        svc.flash(if (d >= 500L) "longtap" else "tap", x, y, x, y, d, "${i + 1}/${list.size}", sizeDp)
-                        svc.tap(x, y, d)
-                        if (i < list.size - 1) delay(gap)
-                    }
                 }
                 "tap" -> if (a.size >= 2) repeatAction(times, gap) { i ->
                     val d = (a.getOrNull(2)?.toLong()) ?: ms ?: 60L
