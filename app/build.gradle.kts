@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.screenwatcher"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.4"
+        versionCode = 1
+        versionName = "1.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -25,7 +25,6 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-    // OCR vẫn dùng ML Kit; nhận diện/so khớp ảnh chuyển sang MobileCLIP2-S2 ONNX.
+    // OCR chạy offline trên máy (mô hình đi kèm trong app)
     implementation("com.google.mlkit:text-recognition:16.0.0")
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 }
