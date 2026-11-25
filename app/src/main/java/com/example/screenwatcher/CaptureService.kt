@@ -50,6 +50,7 @@ class CaptureService : Service() {
         const val A_BUBBLE = "sw.bubble"
         const val A_PROFILE = "sw.profile"
         const val A_BASELINE = "sw.baseline"
+        const val A_RECORD = "sw.record"
         private const val CH = "sw_capture"
     }
 
@@ -71,6 +72,7 @@ class CaptureService : Service() {
     private var loop: Job? = null
     private val lastFire = HashMap<String, Long>()
     private var editor: ActionEditorOverlay? = null
+    private var recOv: RecordOverlay? = null
     private var seqIndex = 0
     private var seqCycle = 0
     @Volatile private var seqResumeAt = 0L // đang nghỉ giữa hai vòng đến thời điểm này
@@ -90,6 +92,7 @@ class CaptureService : Service() {
                 i.getIntExtra("times", 1), i.getLongExtra("gap", 150L),
             )
             A_BASELINE -> recaptureOriginals(i.getStringExtra("id") ?: "")
+            A_RECORD -> if (recOv == null) startRecord() else stopRecord()
             A_TEST -> test(i.getStringExtra("id") ?: "")
             A_PROFILE -> loadProfile(i.getStringExtra("id") ?: "", i.getBooleanExtra("run", true))
         }
@@ -154,6 +157,7 @@ class CaptureService : Service() {
                 startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             },
             onTestRule = { quickTest(it) },
+            onRecord = { fab?.collapse(); main.postDelayed({ startRecord() }, 350) },
             onRunProfile = { id -> fab?.collapse(); loadProfile(id, false) },
             onMergeProfile = { id -> loadProfile(id, false, merge = true) },
             onHideButton = {
@@ -588,6 +592,39 @@ class CaptureService : Service() {
         }).also { it.show() }
     }
 
+    /* ---------------- ghi thao tác ---------------- */
+
+    @Synchronized
+    private fun snapshotFrame(): Bitmap? = grab()
+
+    private fun startRecord() {
+        if (recOv != null) return
+        if (!Settings.canDrawOverlays(this)) {
+            AppToast.show(this, "Cần cấp quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG); return
+        }
+        if (AutoClickService.instance == null) {
+            AppToast.show(this, "Cần bật Dịch vụ trợ năng để ghi và phát lại thao tác", Toast.LENGTH_LONG); return
+        }
+        if (AppState.monitoring) setMonitoring(false)
+        RecState.clear()
+        AppState.picking = true
+        fab?.hide()
+        recOv = RecordOverlay(this, scope, { snapshotFrame() }, { main.post { stopRecord() } }).also { it.show() }
+        AppState.log("● Bắt đầu ghi thao tác")
+    }
+
+    private fun stopRecord() {
+        recOv?.hide(); recOv = null
+        AppState.picking = false
+        showBubble()
+        AppState.log("■ Dừng ghi: ${RecState.steps.size} bước")
+        if (RecState.steps.isEmpty()) {
+            AppToast.show(this, "Chưa ghi được thao tác nào", Toast.LENGTH_SHORT)
+        } else {
+            startActivity(Intent(this, RecordPreviewActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
     /** Lớp phủ chỉnh điểm chạm / vuốt của luật: hiện số 1, 2, 3..., giữ ngón tay để thêm, chạm để chỉnh. */
     private fun pickActions(id: String) {
         val rule = RuleStore.get(this, id) ?: return
@@ -681,6 +718,7 @@ class CaptureService : Service() {
         loop?.cancel()
         overlay?.hide(); overlay = null
         editor?.hide(); editor = null
+        recOv?.hide(); recOv = null
         fab?.hide(); fab = null
         vd?.release(); vd = null
         reader?.close(); reader = null

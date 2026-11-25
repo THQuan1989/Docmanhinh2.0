@@ -40,6 +40,7 @@ class FloatingButton(
     private val onTestRule: (String) -> Unit,
     private val onRunProfile: (String) -> Unit,
     private val onMergeProfile: (String) -> Unit,
+    private val onRecord: () -> Unit,
 ) {
     private companion object {
         const val BUBBLE = 48   // dp
@@ -413,6 +414,7 @@ class FloatingButton(
         val row1 = newRow()
         row1.add("📁 Bộ luật") { showProfiles = true; buildPanel(); clamp(); update() }
         row1.add("+ Luật") { collapse(); onAddRule() }
+        row1.add("● Ghi") { collapse(); onRecord() }
         panel.addView(row1)
         val row2 = newRow().apply { setPadding(0, dp(2), 0, 0) }
         row2.add("Mở app") { collapse(); onOpenApp() }
